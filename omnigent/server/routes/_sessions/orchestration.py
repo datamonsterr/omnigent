@@ -10645,6 +10645,55 @@ async def _create_session_from_existing_agent(
 
         initial_labels[AUTO_HARNESS_LABEL_KEY] = "1"
 
+    # Account pool assignment (optional declarative pool or spec-level pool)
+    reservation_handle = None
+    account_pool_mgr = None
+    try:
+        app_state = getattr(getattr(request, "app", None), "state", None)
+        account_pool_mgr = getattr(app_state, "account_pool_manager", None)
+        if account_pool_mgr is None:
+            from omnigent.runtime import get_caps
+
+            caps = get_caps()
+            if caps and getattr(caps, "account_pools", None):
+                from omnigent.account_pools.manager import AccountPoolManager
+
+                account_pool_mgr = AccountPoolManager(config=caps.account_pools)
+
+        if account_pool_mgr is None and spec_for_env is not None:
+            exec_cfg = getattr(spec_for_env.executor, "config", None)
+            if isinstance(exec_cfg, dict) and "account_pools" in exec_cfg:
+                from omnigent.account_pools.manager import AccountPoolManager
+                from omnigent.account_pools.models import parse_account_pools
+
+                spec_pools = parse_account_pools(exec_cfg["account_pools"])
+                if spec_pools:
+                    account_pool_mgr = AccountPoolManager(config=spec_pools)
+
+        if account_pool_mgr is not None:
+            from omnigent.account_pools.manager import (
+                AccountPoolExhaustedError,
+                prepare_session_account,
+            )
+
+            try:
+                reservation_handle = prepare_session_account(
+                    initial_labels=initial_labels,
+                    harness=selected_harness,
+                    sub_agent_name=body.sub_agent_name,
+                    agent_spec=spec_for_env,
+                    manager=account_pool_mgr,
+                    conversation_store=conversation_store,
+                )
+            except AccountPoolExhaustedError as exc:
+                raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+            except ValueError as exc:
+                raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+    except OmnigentError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - account pool failure must not crash server without log
+        _logger.warning("Account pool assignment error: %s", exc, exc_info=True)
+
     snapshot_kwargs: dict[str, Any] = (
         {"inference_snapshot": inference_snapshot} if inference_snapshot is not None else {}
     )
@@ -10682,7 +10731,11 @@ async def _create_session_from_existing_agent(
                 harness_override=harness_override,
                 **snapshot_kwargs,
             )
+        if reservation_handle is not None and account_pool_mgr is not None:
+            account_pool_mgr.reservation_tracker.release(reservation_handle)
     except NameAlreadyExistsError as exc:
+        if reservation_handle is not None and account_pool_mgr is not None:
+            account_pool_mgr.reservation_tracker.release(reservation_handle)
         if (
             created_worktree_path is not None
             and body.host_id is not None
@@ -10701,6 +10754,8 @@ async def _create_session_from_existing_agent(
             )
         raise OmnigentError(str(exc), code=ErrorCode.CONFLICT) from exc
     except Exception:
+        if reservation_handle is not None and account_pool_mgr is not None:
+            account_pool_mgr.reservation_tracker.release(reservation_handle)
         # Broad catch is intentional: ANY create_conversation failure
         # (integrity error, name clash, ...) must trigger orphan-worktree
         # cleanup before the error propagates. We re-raise unchanged

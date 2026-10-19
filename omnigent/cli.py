@@ -4488,6 +4488,10 @@ def server(
     routing_settings = parse_routing_settings(cfg.get("routing"))
     routing_backends = _build_routing_backends(cfg, server_llm, routing_settings)
 
+    from omnigent.account_pools.models import parse_account_pools
+
+    account_pools = parse_account_pools(cfg.get("account_pools"))
+
     caps = RuntimeCaps(
         execution_timeout=int(effective_timeout),
         default_policies=parse_default_policies(cfg.get("policies")),
@@ -4497,6 +4501,7 @@ def server(
         routing_client=routing_backends.any(),
         routing_backends=routing_backends,
         routing_settings=routing_settings,
+        account_pools=account_pools,
     )
     init_runtime(
         conversation_store=conversation_store,

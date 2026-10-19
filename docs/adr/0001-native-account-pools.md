@@ -1,0 +1,100 @@
+# ADR 0001: Native Multi-Account Pools and Polly Dispatch Integration
+
+## Status
+Accepted
+
+## Context
+Omnigent agent workflows frequently use multiple sub-agent harnesses (Codex, Antigravity, OpenCode, Claude) and benefit from distributing workload across multiple subscription accounts.
+Historically, credential and harness routing was attempted through an external metaharness (`jev_router_omniagent_mcp`). However:
+1. Native Omnigent smart routing is disabled in this environment (`external: false`, `oss: false`).
+2. Existing subscription provider aliases do not pick credentials or handle multi-account home environments.
+3. Polly native session spawn (`sys_session_send`) provides first-class model and harness routing within the core runtime, eliminating the need for an external dispatch process.
+
+This change introduces native multi-account pools directly into Omnigent's session orchestration without modifying smart routing or requiring schema migrations.
+
+## Decisions
+
+### 1. Account Pools Configuration
+Account pools are defined declaratively in the server configuration (`--config`) or within an agent spec (`executor.config.account_pools`):
+
+```yaml
+account_pools:
+  codex:
+    - id: codex-account-primary
+      codex_home: /var/accounts/codex-1
+    - id: codex-account-secondary
+      codex_home: /var/accounts/codex-2
+  antigravity:
+    - id: agy-account-alpha
+      gemini_dir: /var/accounts/agy-alpha/.gemini
+    - id: agy-account-beta
+      gemini_dir: /var/accounts/agy-beta/.gemini
+```
+
+- **Harness Mapping**: The pool is identified by harness family (`codex`, `antigravity`, `opencode`).
+- **Credential Hygiene**: Pools store local directory pointers (`codex_home`, `gemini_dir`) or credential references. Raw tokens or secrets are never stored in pool configs, conversation labels, or logs.
+
+### 2. Selection Algorithm
+Account selection executes strictly at session creation time:
+1. **Explicit Pin First**: If `labels["omnigent.account.id"]` is already specified (or preserved from a parent/prior turn), it is strictly honored.
+2. **Fewest Active Sessions**: Select the account with the minimum number of active sessions (sum of DB active sessions and pending in-flight reservations).
+   - Active DB states: `running`, `waiting`, `pending` with fresh runner heartbeat.
+   - Excluded DB states: `idle`, `stopped`, `disconnected`, `closed`, `failed`, `completed`, `archived`, or stale heartbeat.
+3. **Known Quota Preference**: On identical active session counts, accounts with known remaining quota are selected before unknown accounts (unknown is not assumed unlimited). Accounts with explicitly exhausted quota or authentication errors are skipped.
+4. **Most Remaining Subscription Quota**: Among accounts with known quota, pick by greatest primary remaining quota (5h rolling window), then secondary quota (weekly window).
+5. **Deterministic Stable Tie-Break**: Lexicographical order of `account.id`.
+
+### 3. Concurrency and Reservation Lifecycle
+To prevent race conditions during concurrent session spawns:
+- An atomic in-memory reservation is acquired prior to DB persistence.
+- The reservation is released once the conversation record is persisted (or on failure).
+- If session creation fails or errors out, the reservation is released immediately.
+
+### 4. Runner Environment Forwarding
+The selected account's environment paths are injected into session labels:
+- Codex: `omnigent.codex.codex_home`
+- Antigravity: `omnigent.antigravity.gemini_dir`
+The existing native runner infrastructure forwards these labels to the spawned harness process.
+
+### 5. Architectural Non-Goals
+- No background rebalance daemon.
+- No failover or retry scheduler.
+- No dynamic model routing changes (native smart routing remains untouched).
+- No database migrations (uses existing `conversation_labels` and `live_status`).
+- No UI alterations.
+
+## Upgrade & Compatibility
+- **Fork Baseline**: Developed on `datamonsterr/omnigent` against commit `4173ab3d` to preserve existing user patches.
+- **Future Omnigent Upgrade**: Upstream Omnigent v0.18+ refactors parts of runner lifecycle and session metadata. Once upstream v0.18 stabilizes, we recommend porting this native account pool pattern rather than rebasing existing working checkouts in place.
+
+## Verification & Manual Testing Steps
+
+### 1. Automated Verification
+Run the unit and integration suites:
+```bash
+pytest tests/test_account_pools.py tests/server/integration/test_account_pools_integration.py -v
+```
+
+### 2. Manual Verification
+1. Start the server with account pools defined in `server_config.yaml`:
+   ```bash
+   omnigent server --config server_config.yaml
+   ```
+2. Spawn a session targeting the `codex` harness family:
+   ```bash
+   curl -X POST http://localhost:8080/v1/sessions \
+     -H "Content-Type: application/json" \
+     -d '{"agent_id": "<agent_id>", "title": "Codex Test 1", "harness_override": "codex-native"}'
+   ```
+3. Inspect the returned JSON labels:
+   - `omnigent.account.id` is assigned (e.g. `codex-account-primary`).
+   - `omnigent.codex.codex_home` points to `/var/accounts/codex-1`.
+4. Spawn a concurrent or active second session:
+   - Confirm it selects `codex-account-secondary` due to the active session count on `codex-account-primary`.
+5. Spawn a session with explicit account pin:
+   ```bash
+   curl -X POST http://localhost:8080/v1/sessions \
+     -H "Content-Type: application/json" \
+     -d '{"agent_id": "<agent_id>", "title": "Pinned Test", "harness_override": "codex-native", "labels": {"omnigent.account.id": "codex-account-primary"}}'
+   ```
+   - Confirm `omnigent.account.id` remains `codex-account-primary`.
