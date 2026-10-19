@@ -142,7 +142,8 @@ export const NATIVE_CODING_AGENTS = [
     displayName: "OpenCode",
     iconKind: "opencode",
     sortRank: 25,
-    // No capabilities → no permission picker. OpenCode has no claude-style
+    capabilities: ["modelPicker"],
+    // No permission picker. OpenCode has no claude-style
     // permission-mode surface to mirror: its native modes are the `build`
     // (allow-by-default) and `plan` primary agents, switched at runtime via Tab
     // inside the TUI — and `opencode attach` (how the runner launches it) has
@@ -230,7 +231,7 @@ export const NATIVE_CODING_AGENTS = [
     // agy's only pre-emptive control is the all-or-nothing
     // `--dangerously-skip-permissions`, so it gets a two-value toggle rather
     // than Claude's graded permissionMode selector.
-    capabilities: ["skipPermissions"],
+    capabilities: ["skipPermissions", "modelPicker"],
   },
   {
     key: "goose",
@@ -509,11 +510,11 @@ export function nativeWrapperLabelsForAgent(
 }
 
 export function nativeDisplayNameForAgent(agent: Pick<AvailableAgent, "name" | "harness">): string {
-  return (
-    nativeCodingAgentForAvailableAgent(agent)?.displayName ??
-    nativeCodingAgentForAgentName(agent.name)?.displayName ??
-    agent.name
-  );
+  const nativeAgent = nativeCodingAgentForAvailableAgent(agent);
+  if (nativeAgent !== undefined && agent.name === nativeAgent.agentName) {
+    return nativeAgent.displayName;
+  }
+  return nativeCodingAgentForAgentName(agent.name)?.displayName ?? agent.name;
 }
 
 export function nativeAgentSortRank(agent: Pick<AvailableAgent, "name" | "harness">): number {

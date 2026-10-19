@@ -76,6 +76,7 @@ from omnigent.harness_plugins import (
     CLAUDE_NATIVE_CODING_AGENT,
     CODEX_NATIVE_CODING_AGENT,
     DEVIN_NATIVE_CODING_AGENT,
+    OPENCODE_NATIVE_CODING_AGENT,
     NativeCodingAgent,
 )
 from omnigent.host.frames import RUNNER_LOG_TAIL_HEADING
@@ -210,6 +211,11 @@ from omnigent.server.routes._sessions.common import (  # noqa: F401
     _MODEL_TOKEN_KEYS,
     _NATIVE_POLICY_NOT_ENFORCED_CODE,
     _NATIVE_TERMINAL_ENSURE_FAILED_CODE,
+    _OPENCODE_NATIVE_SUBAGENT_AGENT_LABEL_KEY,
+    _OPENCODE_NATIVE_SUBAGENT_DISPLAY_FALLBACK,
+    _OPENCODE_NATIVE_SUBAGENT_PROMPT_LABEL_KEY,
+    _OPENCODE_NATIVE_SUBAGENT_SESSION_ID_LABEL_KEY,
+    _OPENCODE_NATIVE_SUBAGENT_WRAPPER_LABEL_VALUE,
     _PI_NATIVE_WRAPPER_LABEL_VALUE,
     _RUNNER_CONVICTION_POLL_S,
     _RUNNER_FORWARD_TIMEOUT,
@@ -4003,6 +4009,107 @@ async def _create_and_publish_antigravity_child(
         parent_conv.agent_id,
         conversation_store,
         harness=ANTIGRAVITY_NATIVE_CODING_AGENT.harness,
+    )
+    return child.id
+
+
+def _opencode_subagent_title(agent_name: str, opencode_session_id: str) -> str:
+    """
+    Build the child row title for an OpenCode sub-agent.
+
+    ``"<agent name>:<opencode session id>"``. The Agents rail splits a child
+    title on its FIRST colon into ``tool`` / ``session_name``, so this renders
+    the opencode agent name as the agent label and the opencode session id as
+    the correlation handle — same shape as ``_antigravity_subagent_title``.
+
+    :param agent_name: opencode sub-agent name, e.g. ``"build"``.
+    :param opencode_session_id: The child's opencode session id.
+    :returns: Child conversation title.
+    """
+    head = agent_name.replace(":", "-").strip() or _OPENCODE_NATIVE_SUBAGENT_DISPLAY_FALLBACK
+    return f"{head}:{opencode_session_id}"
+
+
+def _opencode_subagent_labels_from_body(
+    opencode_session_id: str,
+    body: SessionEventInput,
+) -> dict[str, str]:
+    """
+    Build the label dict for an OpenCode-native sub-agent child row.
+
+    :param opencode_session_id: The child's opencode session id.
+    :param body: Validated ``external_opencode_subagent_start`` event body.
+    :returns: Labels to upsert on the child conversation row.
+    """
+    labels: dict[str, str] = {
+        _CLAUDE_NATIVE_WRAPPER_LABEL_KEY: _OPENCODE_NATIVE_SUBAGENT_WRAPPER_LABEL_VALUE,
+        _OPENCODE_NATIVE_SUBAGENT_SESSION_ID_LABEL_KEY: opencode_session_id,
+    }
+    for data_key, label_key in (
+        ("agent", _OPENCODE_NATIVE_SUBAGENT_AGENT_LABEL_KEY),
+        ("prompt", _OPENCODE_NATIVE_SUBAGENT_PROMPT_LABEL_KEY),
+    ):
+        value = body.data.get(data_key)
+        if isinstance(value, str) and value:
+            labels[label_key] = value
+    return labels
+
+
+async def _create_and_publish_opencode_child(
+    parent_id: str,
+    parent_conv: Conversation,
+    title: str,
+    agent_name: str,
+    labels: dict[str, str],
+    conversation_store: ConversationStore,
+) -> str:
+    """
+    Create an OpenCode sub-agent child row and publish ``session.created``.
+
+    :param parent_id: Parent opencode-native conversation id.
+    :param parent_conv: Parent row whose ``agent_id`` / ``runner_id`` the child
+        inherits.
+    :param title: Child title from :func:`_opencode_subagent_title`.
+    :param agent_name: opencode sub-agent name, e.g. ``"build"``.
+    :param labels: Labels to stamp on the new child row.
+    :param conversation_store: Store used to create the child row.
+    :returns: New child conversation id, e.g. ``"conv_child456"``.
+    """
+    try:
+        child = await asyncio.to_thread(
+            conversation_store.create_conversation,
+            kind="sub_agent",
+            title=title,
+            parent_conversation_id=parent_id,
+            agent_id=parent_conv.agent_id,
+            runner_id=parent_conv.runner_id,
+            sub_agent_name=agent_name or _OPENCODE_NATIVE_SUBAGENT_DISPLAY_FALLBACK,
+        )
+    except NameAlreadyExistsError:
+        # The (parent, title) unique index fired: a concurrent start, or a
+        # redelivered start that arrived before ``set_labels`` ran. Adopt the
+        # row and upsert labels rather than 500ing the sub-agent off the rail.
+        existing = await asyncio.to_thread(
+            _find_subagent_child_by_title, conversation_store, parent_id, title
+        )
+        if existing is None:
+            raise
+        await asyncio.to_thread(conversation_store.set_labels, existing.id, labels)
+        await _publish_session_created(
+            parent_id,
+            existing.id,
+            parent_conv.agent_id,
+            conversation_store,
+            harness=OPENCODE_NATIVE_CODING_AGENT.harness,
+        )
+        return existing.id
+    await asyncio.to_thread(conversation_store.set_labels, child.id, labels)
+    await _publish_session_created(
+        parent_id,
+        child.id,
+        parent_conv.agent_id,
+        conversation_store,
+        harness=OPENCODE_NATIVE_CODING_AGENT.harness,
     )
     return child.id
 
@@ -8823,6 +8930,45 @@ def _presentation_labels_for_agent_impl(agent: Agent) -> dict[str, str]:
     """
     native_agent = _native_coding_agent_for_agent(agent)
     return native_agent.presentation_labels if native_agent is not None else {}
+
+
+def _env_labels_for_agent_spec(*args: Any, **kwargs: Any) -> dict[str, str]:
+    """Call-time proxy so a facade patch of this symbol is honored here."""
+    from omnigent.server.routes import sessions as _facade
+
+    return _facade._env_labels_for_agent_spec(*args, **kwargs)
+
+
+def _env_labels_for_agent_spec_impl(agent: Agent) -> dict[str, str]:
+    """Extract custom environment labels (codex_home, gemini_dir) from an agent's spec."""
+    try:
+        spec = (
+            get_agent_cache()
+            .load(agent.id, agent.bundle_location, expand_env=agent.session_id is None)
+            .spec
+        )
+    except Exception:
+        return {}
+    labels: dict[str, str] = {}
+    exec_cfg = getattr(spec.executor, "config", None)
+    if isinstance(exec_cfg, dict):
+        if "codex_home" in exec_cfg:
+            labels["omnigent.codex.codex_home"] = str(exec_cfg["codex_home"])
+        if "gemini_dir" in exec_cfg:
+            labels["omnigent.antigravity.gemini_dir"] = str(exec_cfg["gemini_dir"])
+    guardrails_spec = getattr(spec, "guardrails", None)
+    if guardrails_spec is not None and getattr(guardrails_spec, "labels", None):
+        glabels = guardrails_spec.labels
+        if isinstance(glabels, dict):
+            if "codex_home" in glabels:
+                val = getattr(glabels["codex_home"], "initial", None)
+                if val:
+                    labels["omnigent.codex.codex_home"] = str(val)
+            if "gemini_dir" in glabels:
+                val = getattr(glabels["gemini_dir"], "initial", None)
+                if val:
+                    labels["omnigent.antigravity.gemini_dir"] = str(val)
+    return labels
 
 
 def _load_agent_spec_for_session(*args: Any, **kwargs: Any) -> AgentSpec | None:

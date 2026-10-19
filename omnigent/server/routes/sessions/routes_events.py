@@ -136,6 +136,7 @@ from omnigent.server.routes._sessions.common import (
     _EXTERNAL_MCP_STARTUP_TYPE,
     _EXTERNAL_MODEL_CHANGE_TYPE,
     _EXTERNAL_MODEL_OPTIONS_TYPE,
+    _EXTERNAL_OPENCODE_SUBAGENT_START_TYPE,
     _EXTERNAL_OUTPUT_REASONING_DELTA_TYPE,
     _EXTERNAL_OUTPUT_TEXT_DELTA_TYPE,
     _EXTERNAL_PERMISSION_MODE_CHANGE_TYPE,
@@ -251,6 +252,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _persist_external_conversation_item,
     _persist_external_conversation_items,
     _persist_external_devin_subagent_start,
+    _persist_external_opencode_subagent_start,
     _persist_external_session_usage,
     _persist_host_launch_failure_turn,
     _persist_native_terminal_failure,
@@ -1116,6 +1118,7 @@ def register_events_routes(
             _EXTERNAL_ACP_SUBAGENT_START_TYPE,
             _EXTERNAL_CODEX_SUBAGENT_START_TYPE,
             _EXTERNAL_ANTIGRAVITY_SUBAGENT_START_TYPE,
+            _EXTERNAL_OPENCODE_SUBAGENT_START_TYPE,
             _EXTERNAL_DEVIN_SUBAGENT_START_TYPE,
             _EXTERNAL_CODEX_COLLABORATION_MODE_CHANGE_TYPE,
             _EXTERNAL_CODEX_APPROVAL_MODE_CHANGE_TYPE,
@@ -2320,6 +2323,16 @@ def register_events_routes(
             )
             # Returned to the agy reader so it can mirror the child cascade's
             # steps into this id.
+            return {"queued": False, "child_session_id": child_id}
+        if body.type == _EXTERNAL_OPENCODE_SUBAGENT_START_TYPE:
+            child_id = await _persist_external_opencode_subagent_start(
+                session_id,
+                conv,
+                body,
+                conversation_store,
+            )
+            # Returned to the opencode forwarder so it can address subsequent
+            # mirror events to the child id.
             return {"queued": False, "child_session_id": child_id}
         if body.type == _EXTERNAL_CODEX_SUBAGENT_START_TYPE:
             child_id = await _persist_external_codex_subagent_start(

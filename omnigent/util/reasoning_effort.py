@@ -43,6 +43,108 @@ PI_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "ma
 #: pi's spelling of "no thinking", i.e. canonical ``none``.
 PI_THINKING_OFF = "off"
 
+#: OpenCode has no native reasoning-effort axis: the dial selects a model
+#: tier instead. Mirrors the operator's jev-router tiers so the Web UI dial
+#: and dispatched routing agree on what each rung means.
+OPENCODE_EFFORTS = frozenset({"low", "medium", "high"})
+
+#: Default tier applied when the session has no explicit model (the "Default"
+#: picker row): free routine edits → implementation worker → orchestrator.
+OPENCODE_EFFORT_DEFAULT_TIER: dict[str, str] = {
+    "low": "opencode-go/longcat-2.5-preview-free",
+    "medium": "opencode-go/deepseek-v4-flash",
+    "high": "opencode-go/muse-spark-1.3-contributor",
+}
+
+#: Per-brand tiers so the dial stays inside the session's current model
+#: family instead of jumping families. Brand keys match the model-id prefix
+#: (after the ``provider/`` prefix); longest match wins. Single-model brands
+#: pin every rung to that model.
+OPENCODE_EFFORT_FAMILY_TIERS: dict[str, dict[str, str]] = {
+    "deepseek": {
+        "low": "opencode-go/deepseek-v4-flash",
+        "medium": "opencode-go/deepseek-v4.1-flash",
+        "high": "opencode-go/deepseek-v4-pro",
+    },
+    "muse-spark": {
+        "low": "opencode-go/muse-spark-1.2-contributor",
+        "medium": "opencode-go/muse-spark-1.2-contributor",
+        "high": "opencode-go/muse-spark-1.3-contributor",
+    },
+    "kimi": {
+        "low": "opencode-go/kimi-k2.7-code",
+        "medium": "opencode-go/kimi-k2.7-code",
+        "high": "opencode-go/kimi-k3",
+    },
+    "glm": {
+        "low": "opencode-go/glm-5.3-flash",
+        "medium": "opencode-go/glm-5.2",
+        "high": "opencode-go/glm-5.3",
+    },
+    "gpt": {
+        "low": "opencode-go/gpt-5.6-luna",
+        "medium": "opencode-go/gpt-5.6-luna",
+        "high": "opencode-go/gpt-6-luna",
+    },
+    "grok": {
+        "low": "opencode-go/grok-4.6",
+        "medium": "opencode-go/grok-4.6",
+        "high": "opencode-go/grok-4.7",
+    },
+    "longcat": {
+        "low": "opencode-go/longcat-2.0",
+        "medium": "opencode-go/longcat-2.5-preview-free",
+        "high": "opencode-go/longcat-2.5-preview-free",
+    },
+    "mimo": {
+        "low": "opencode-go/mimo-v2.5",
+        "medium": "opencode-go/mimo-v2.6-flash",
+        "high": "opencode-go/mimo-v2.6-pro",
+    },
+    "minimax": {
+        "low": "opencode-go/minimax-m2.7",
+        "medium": "opencode-go/minimax-m2.7",
+        "high": "opencode-go/minimax-m3",
+    },
+    "qwen": {
+        "low": "opencode-go/qwen3.8-flash",
+        "medium": "opencode-go/qwen3.7-plus",
+        "high": "opencode-go/qwen3.8-max",
+    },
+    "hy": {
+        "low": "opencode-go/hy3",
+        "medium": "opencode-go/hy4-preview",
+        "high": "opencode-go/hy4-preview",
+    },
+    "claude-haiku": {
+        "low": "opencode-go/claude-haiku-5-5",
+        "medium": "opencode-go/claude-haiku-5-5",
+        "high": "opencode-go/claude-haiku-5-5",
+    },
+    "space-bunny": {
+        "low": "opencode-go/space-bunny",
+        "medium": "opencode-go/space-bunny",
+        "high": "opencode-go/space-bunny",
+    },
+}
+
+
+def opencode_effort_tier_model(model_id: str | None, effort: str) -> str:
+    """Resolve an effort rung to a full ``provider/model`` id for OpenCode.
+
+    Stays inside the current model's brand family when it has tiers;
+    otherwise (no explicit model, unknown brand) uses the default tier.
+
+    :param model_id: Current ``provider/model`` id, or ``None`` for Default.
+    :param effort: A validated rung from :data:`OPENCODE_EFFORTS`.
+    """
+    if model_id and "/" in model_id:
+        bare = model_id.split("/", 1)[1]
+        for brand in sorted(OPENCODE_EFFORT_FAMILY_TIERS, key=len, reverse=True):
+            if bare.startswith(brand):
+                return OPENCODE_EFFORT_FAMILY_TIERS[brand][effort]
+    return OPENCODE_EFFORT_DEFAULT_TIER[effort]
+
 
 def to_pi_thinking_level(effort: str) -> str:
     """Translate a canonical effort to pi's ``--thinking`` / RPC level.
@@ -141,6 +243,7 @@ def efforts_for_harness(harness: str | None) -> frozenset[str] | None:
         EffortFamily.COPILOT: COPILOT_EFFORTS,
         EffortFamily.PI: PI_EFFORTS,
         EffortFamily.CODEX_NATIVE: CODEX_NATIVE_EFFORTS,
+        EffortFamily.OPENCODE: OPENCODE_EFFORTS,
     }.get(capabilities.effort, frozenset())
 
 

@@ -54,6 +54,9 @@ _AGENT_NAME = "opencode"
 # shared with the codex-native forwarder).
 _EXTERNAL_ITEM = "external_conversation_item"
 _EXTERNAL_STATUS = "external_session_status"
+# Mint a child conversation row for an opencode sub-agent (the "Agents" rail
+# tree), POSTed to the PARENT session's events endpoint.
+_EXTERNAL_OPENCODE_SUBAGENT_START = "external_opencode_subagent_start"
 # Brackets opencode's own compaction; the server maps these to the
 # ``response.compaction.in_progress`` / ``…completed`` SSE the web UI renders.
 _EXTERNAL_COMPACTION_STATUS = "external_compaction_status"
@@ -141,6 +144,14 @@ def _message_is_complete(info: Mapping[str, Any] | None) -> bool:
     return isinstance(time_info.get("completed"), (int, float))
 
 
+def _json_body(response: httpx.Response) -> Any:
+    """Decode a JSON response body; returns ``None`` on any error."""
+    try:
+        return response.json()
+    except (ValueError, KeyError):
+        return None
+
+
 class OpenCodeNativeForwarder:
     """
     Translate one OpenCode session's SSE stream into Omnigent events.
@@ -218,6 +229,20 @@ class OpenCodeNativeForwarder:
         self._active_message_id: str | None = None
         self._running_response_id: str | None = None
         self._question_tasks: dict[str, asyncio.Task[None]] = {}
+        # opencode child session id -> Omnigent child conversation id, for
+        # sub-agents the root model spawns via the ``task`` tool. Child parts
+        # and statuses stream on the same ``/event`` bus under the CHILD
+        # session id; without this map (and the events that fill it) the
+        # Agents rail would stay empty even though opencode hands us the
+        # children — the same gap agy/codex close with their own mirrors.
+        self._subagent_children: dict[str, str] = {}
+        # opencode child session ids already probed and found NOT to belong to
+        # this root (other activity on the shared ``/event`` bus). Probe once;
+        # a foreign session is never re-resolved.
+        self._subagent_checked: set[str] = set()
+        # child part id -> latest cumulative text snapshot, finalized into the
+        # child conversation on that child's ``session.idle``.
+        self._child_pending_text: dict[str, str] = {}
 
     async def seed_dedupe_from_history(self) -> None:
         """
@@ -384,9 +409,17 @@ class OpenCodeNativeForwarder:
         """
         Translate one OpenCode event into Omnigent session events.
 
+        Child-session events (a sub-agent the root model spawned) are routed
+        to the mirrored child conversation instead of the root; every other
+        event follows the existing root handlers.
+
         :param event: A decoded OpenCode SSE event.
         """
-        if not self._event_targets_session(event):
+        target = await self._resolve_event_target(event)
+        if target is None:
+            return
+        if target != self._session_id:
+            await self._handle_child_event(event, target)
             return
         handler = _HANDLERS.get(event.type)
         if handler is None:
@@ -419,6 +452,167 @@ class OpenCodeNativeForwarder:
             return True
         return bool(session_id == self._opencode_session_id)
 
+    async def _resolve_event_target(self, event: OpenCodeEvent) -> str | None:
+        """
+        Resolve which Omnigent conversation an event belongs to.
+
+        Root-session events (and boot/global signals) resolve to this
+        forwarder's conversation. Events for a KNOWN mirror child resolve to
+        that child's conversation. An unknown non-root session id is probed
+        once: if its ``SessionInfo.parentID`` chains back to this root (or a
+        known child) it is registered as a sub-agent child; otherwise it is
+        ignored as foreign activity on the shared bus.
+
+        :param event: A decoded OpenCode SSE event.
+        :returns: The Omnigent conversation id to route to, or ``None`` to
+            drop the event.
+        """
+        props = event.properties
+        session_id = props.get("sessionID") or props.get("session_id")
+        info = props.get("info")
+        if session_id is None and isinstance(info, Mapping):
+            session_id = info.get("id")
+        if not isinstance(session_id, str):
+            return self._session_id
+        if session_id == self._opencode_session_id:
+            return self._session_id
+        if session_id in self._subagent_children:
+            return self._subagent_children[session_id]
+        if session_id in self._subagent_checked:
+            return None
+        self._subagent_checked.add(session_id)
+        return await self._resolve_child_session(session_id)
+
+    async def _resolve_child_session(self, opencode_session_id: str) -> str | None:
+        """
+        Register *opencode_session_id* as a sub-agent child when it chains to
+        this root, returning the mirrored child conversation id (or ``None``).
+
+        Uses the child's ``SessionInfo.parentID``: the root's own children
+        point at the root opencode session; deeper grandchildren point at an
+        already-mirrored child. The child's ``agent``/``title`` becomes the
+        rail label.
+
+        :param opencode_session_id: The child opencode session id.
+        :returns: The mirrored child conversation id, or ``None``.
+        """
+        try:
+            session = await self._opencode.get_session(opencode_session_id)
+        except Exception:  # noqa: BLE001 - transient API/transport failure
+            return None
+        if session is None:
+            return None
+        parent_id = session.parent_id
+        if not isinstance(parent_id, str) or not parent_id:
+            return None
+        if parent_id == self._opencode_session_id:
+            parent_conv = self._session_id
+        elif parent_id in self._subagent_children:
+            parent_conv = self._subagent_children[parent_id]
+        else:
+            return None
+        agent_name = session.title if isinstance(session.title, str) else None
+        return await self._register_subagent_child(
+            opencode_session_id,
+            parent_conv,
+            agent_name,
+        )
+
+    async def _register_subagent_child(
+        self,
+        opencode_session_id: str,
+        parent_conv: str,
+        agent_name: str | None,
+    ) -> str | None:
+        """
+        POST ``external_opencode_subagent_start`` and cache the child id.
+
+        :param opencode_session_id: The child opencode session id.
+        :param parent_conv: Omnigent parent conversation (root or a deeper
+            mirrored child).
+        :param agent_name: Rail label for the sub-agent, or ``None``.
+        :returns: The minted child conversation id, or ``None`` on failure.
+        """
+        data: _JsonObject = {"session_id": opencode_session_id}
+        if agent_name:
+            data["agent"] = agent_name
+        response = await self._post_event(
+            _EXTERNAL_OPENCODE_SUBAGENT_START,
+            data,
+            target=parent_conv,
+        )
+        child_id: str | None = None
+        if response is not None:
+            body = _json_body(response)
+            if isinstance(body, Mapping):
+                candidate = body.get("child_session_id")
+                if isinstance(candidate, str) and candidate:
+                    child_id = candidate
+        if child_id is None:
+            _logger.warning(
+                "OpenCode sub-agent registration failed; not mirroring it: parent=%s child=%s",
+                parent_conv,
+                opencode_session_id,
+            )
+            return None
+        self._subagent_children[opencode_session_id] = child_id
+        await self._post_event(_EXTERNAL_STATUS, {"status": "running"}, target=child_id)
+        _logger.info(
+            "OpenCode sub-agent mirroring started: parent=%s child_ocsid=%s child_session=%s "
+            "agent=%r",
+            parent_conv,
+            opencode_session_id,
+            child_id,
+            agent_name,
+        )
+        return child_id
+
+    async def _handle_child_event(self, event: OpenCodeEvent, child_conv: str) -> None:
+        """
+        Mirror a sub-agent's stream into its child conversation.
+
+        The rail needs the child to exist, be clearly "working" while opencode
+        drives it, and land on "done" when it finishes — plus its final text so
+        the row shows what it produced. Tool parts are intentionally not
+        mirrored (the parent already shows the ``task`` tool card).
+
+        :param event: A decoded OpenCode child-session event.
+        :param child_conv: The mirrored child conversation id.
+        """
+        props = event.properties
+        event_type = event.type
+        if event_type == "message.part.updated":
+            part = props.get("part")
+            if not isinstance(part, Mapping):
+                return
+            if part.get("type") == "text":
+                text = part.get("text")
+                if isinstance(text, str) and text:
+                    part_id = part.get("id")
+                    if isinstance(part_id, str) and part_id:
+                        session_id = part.get("sessionID") or props.get("sessionID")
+                        self._child_pending_text[f"{session_id or ''}:{part_id}"] = text
+            return
+        if event_type == "session.idle":
+            # Finalize the sub-agent's aggregated text, then land the done edge.
+            response_id = self._opencode_session_id
+            for text in self._child_pending_text.values():
+                await self._post_event(
+                    _EXTERNAL_ITEM,
+                    {
+                        "item_type": "message",
+                        "item_data": {
+                            "role": "assistant",
+                            "agent": _AGENT_NAME,
+                            "content": [{"type": "output_text", "text": text}],
+                        },
+                        "response_id": response_id,
+                    },
+                    target=child_conv,
+                )
+            self._child_pending_text.clear()
+            await self._post_event(_EXTERNAL_STATUS, {"status": "idle"}, target=child_conv)
+
     # --- dedupe / keys ---------------------------------------------------
 
     def _key(self, *parts: str) -> str:
@@ -432,16 +626,22 @@ class OpenCodeNativeForwarder:
 
     # --- posting helpers -------------------------------------------------
 
-    async def _post_event(self, event_type: str, data: _JsonObject) -> httpx.Response | None:
+    async def _post_event(
+        self, event_type: str, data: _JsonObject, *, target: str | None = None
+    ) -> httpx.Response | None:
         """
         POST one Omnigent session event with a single retry.
 
         :param event_type: Omnigent event type, e.g.
             ``"external_session_status"``.
         :param data: Event data payload.
+        :param target: Conversation to post into; ``None`` posts to this
+            forwarder's own (root) conversation. Mirrored sub-agent events
+            target the child conversation.
         :returns: The HTTP response, or ``None`` on transport failure.
         """
-        url = f"/v1/sessions/{quote(self._session_id, safe='')}/events"
+        conv_id = target or self._session_id
+        url = f"/v1/sessions/{quote(conv_id, safe='')}/events"
         payload = {"type": event_type, "data": data}
         try:
             return await self._server.post(url, json=payload)
@@ -449,7 +649,7 @@ class OpenCodeNativeForwarder:
             _logger.warning(
                 "OpenCode forwarder failed to post %s for session=%s",
                 event_type,
-                self._session_id,
+                conv_id,
                 exc_info=True,
             )
             return None

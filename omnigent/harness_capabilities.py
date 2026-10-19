@@ -61,6 +61,9 @@ class EffortFamily(str, Enum):
     # The real codex process is the per-model authority on reasoning levels
     # (Sol reaches ``ultra``); the SDK codex wire caps at ``xhigh``.
     CODEX_NATIVE = "codex-native"
+    # OpenCode has no native effort axis: the dial selects a model tier
+    # (see ``OPENCODE_EFFORT_FAMILY_TIERS`` in reasoning_effort.py).
+    OPENCODE = "opencode"
 
 
 class ModelFamily(str, Enum):

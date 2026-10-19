@@ -65,6 +65,10 @@ export function effortLevelsForFamily(family: string | null | undefined): readon
   return (family && EFFORT_FAMILY_LEVELS[family]) || [];
 }
 
+const ANTIGRAVITY_NATIVE_WRAPPER = "antigravity-native-ui";
+
+const OPENCODE_NATIVE_WRAPPER = "opencode-native-ui";
+
 /**
  * Fail-closed gate for Web UI reasoning-effort controls.
  *
@@ -102,7 +106,13 @@ export function supportsEffortControl(
     // Devin has no --effort flag: effort is a model-variant suffix the executor
     // recombines and re-applies via /model, so the in-chat effort dial is live.
     wrapper === DEVIN_NATIVE_WRAPPER ||
-    (wrapper == null && session?.harness === "codex-native")
+    wrapper === ANTIGRAVITY_NATIVE_WRAPPER ||
+    // OpenCode has no native effort axis: the dial selects a model tier
+    // (low/medium/high, applied as a session model override server-side),
+    // mirroring the operator's router tiers.
+    wrapper === OPENCODE_NATIVE_WRAPPER ||
+    (wrapper == null && session?.harness === "codex-native") ||
+    (wrapper == null && session?.harness === "antigravity-native")
   ) {
     return true;
   }

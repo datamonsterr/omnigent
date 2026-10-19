@@ -3179,12 +3179,43 @@ export function NewChatLandingScreen() {
     cachedHostModels?.pi,
   );
   const {
+    data: hostAntigravityModelOptions,
+    isLoading: hostAntigravityModelsLoading,
+    error: hostAntigravityModelsError,
+  } = useHostModelOptions(
+    selectedHostId,
+    "antigravity-native",
+    canLoadHostModels("antigravity-native"),
+    {
+      poll: selectedNativeHarness === "antigravity-native",
+    },
+  );
+  const availableAntigravityModels = availableHostModels(
+    "antigravity-native",
+    hostAntigravityModelOptions,
+    hostAntigravityModelsLoading,
+    cachedHostModels?.antigravity,
+  );
+  const {
     data: hostDevinModelOptions,
     isLoading: hostDevinModelsLoading,
     error: hostDevinModelsError,
   } = useHostModelOptions(selectedHostId, "devin-native", canLoadHostModels("devin-native"), {
     poll: selectedNativeHarness === "devin-native",
   });
+  const {
+    data: hostOpencodeModelOptions,
+    isLoading: hostOpencodeModelsLoading,
+    error: hostOpencodeModelsError,
+  } = useHostModelOptions(selectedHostId, "opencode-native", canLoadHostModels("opencode-native"), {
+    poll: selectedNativeHarness === "opencode-native",
+  });
+  const availableOpencodeModels = availableHostModels(
+    "opencode-native",
+    hostOpencodeModelOptions,
+    hostOpencodeModelsLoading,
+    cachedHostModels?.opencode,
+  );
   const previewHarness = selectedNativeHarness ?? pickedHarness ?? selectedAgent?.harness ?? null;
   const previewSandboxProvider =
     sandboxProvider ?? (info !== "loading" ? info.sandbox_provider : null);
@@ -3275,6 +3306,19 @@ export function NewChatLandingScreen() {
     () => (sandboxSelected ? (sandboxCatalog ?? []) : (availableCodexModels ?? [])),
     [availableCodexModels, sandboxSelected, sandboxCatalog],
   );
+  const antigravityModelOptions = useMemo(
+    () =>
+      sandboxSelected
+        ? (sandboxCatalog ?? [])
+        : (availableAntigravityModels ?? []).map((option) => ({
+            id: option.id,
+            model: option.model,
+            displayName: nativeModelLabel(option),
+            isDefault: option.isDefault,
+            source: option.source,
+          })),
+    [availableAntigravityModels, sandboxSelected, sandboxCatalog],
+  );
   // Devin model *families* (claude-opus-5, swe-2, …). Effort is a separate
   // axis Omnigent carries as reasoning_effort and the runner recombines onto
   // the id at launch (resolve_devin_launch_model), so the list stays short
@@ -3295,6 +3339,19 @@ export function NewChatLandingScreen() {
             source: option.source,
           })),
     [availablePiModels, sandboxSelected, sandboxCatalog],
+  );
+  const opencodeModelOptions = useMemo(
+    () =>
+      sandboxSelected
+        ? (sandboxCatalog ?? [])
+        : (availableOpencodeModels ?? []).map((option) => ({
+            id: option.id,
+            model: option.model,
+            displayName: nativeModelLabel(option),
+            isDefault: option.isDefault,
+            source: option.source,
+          })),
+    [availableOpencodeModels, sandboxSelected, sandboxCatalog],
   );
   const supportsPermissionMode = nativeAgentHasCapability(selectedAgent, "permissionMode");
   const supportsDevinMode = nativeAgentHasCapability(selectedAgent, "devinMode");
@@ -3385,17 +3442,25 @@ export function NewChatLandingScreen() {
       // Routing inherits the picked harness's defaults, not a previous selection's mode.
       return [{ label: "Permission mode", value: AUTO_PERMISSION_MODE.label }];
     }
-    if (supportsModelPicker && !supportsPermissionMode) {
+    if (
+      supportsModelPicker &&
+      !supportsPermissionMode &&
+      selectedNativeHarness !== "antigravity-native"
+    ) {
+      const pickerCatalog =
+        selectedNativeHarness === "opencode-native" ? opencodeModelOptions : piModelOptions;
       const modelValue =
-        piModelOptions.find((model) => model.id === pickedModel)?.displayName ??
-        defaultModelLabel(piModelOptions);
+        pickerCatalog.find((model) => model.id === pickedModel)?.displayName ??
+        defaultModelLabel(pickerCatalog);
       const thinkingLevelValue = normalizeEffortLabel(pickedEffort);
       return [
         { label: "Model", value: modelValue },
         ...(selectedNativeHarness === "pi-native" && thinkingLevelValue
           ? [{ label: "Thinking level", value: thinkingLevelValue }]
-          : []),
-        ...sourceRows(piModelOptions),
+          : selectedNativeHarness === "opencode-native" && thinkingLevelValue
+            ? [{ label: "Effort", value: thinkingLevelValue }]
+            : []),
+        ...sourceRows(pickerCatalog),
       ];
     }
     if (supportsPermissionMode) {
@@ -3472,7 +3537,20 @@ export function NewChatLandingScreen() {
     if (supportsAgySkipPermissions) {
       const skipValue =
         AGY_NATIVE_SKIP_MODES.find((m) => m.value === agySkipMode)?.label ?? agySkipMode;
-      return [{ label: "Permission mode", value: skipValue }, ...routingRow];
+      const pickedAgyRow = antigravityModelOptions.find((m) => m.id === pickedModel);
+      const modelValue = visibleModelLabel(
+        pickedAgyRow ? nativeModelLabel(pickedAgyRow) : defaultModelLabel(antigravityModelOptions),
+      );
+      const effortValue = pickedModel.startsWith("claude-")
+        ? null
+        : normalizeEffortLabel(pickedEffort);
+      return [
+        { label: "Model", value: modelValue },
+        ...(effortValue ? [{ label: "Effort", value: effortValue }] : []),
+        { label: "Permission mode", value: skipValue },
+        ...routingRow,
+        ...sourceRows(antigravityModelOptions),
+      ];
     }
     if (supportsDevinPermission) {
       const devinValue =
@@ -3504,6 +3582,8 @@ export function NewChatLandingScreen() {
     claudeModelOptions,
     codexModelOptions,
     piModelOptions,
+    opencodeModelOptions,
+    antigravityModelOptions,
     pickedEffort,
     permissionMode,
     approvalMode,
@@ -3533,7 +3613,11 @@ export function NewChatLandingScreen() {
           ? piModelOptions
           : selectedNativeHarness === "codex-native"
             ? codexModelOptions
-            : [];
+            : selectedNativeHarness === "antigravity-native"
+              ? antigravityModelOptions
+              : selectedNativeHarness === "opencode-native"
+                ? opencodeModelOptions
+                : [];
   const [pickerModelSearch, setPickerModelSearch] = useState("");
   const pickerModelsLoading =
     sandboxCatalogPending ||
@@ -3547,7 +3631,11 @@ export function NewChatLandingScreen() {
             ? hostPiModelsLoading
             : selectedNativeHarness === "devin-native"
               ? hostDevinModelsLoading
-              : false));
+              : selectedNativeHarness === "antigravity-native"
+                ? hostAntigravityModelsLoading
+                : selectedNativeHarness === "opencode-native"
+                  ? hostOpencodeModelsLoading
+                  : false));
   const pickerModelsError = sandboxSelected
     ? sandboxCatalogError || sandboxDefaultCatalogError
       ? new Error((sandboxCatalogError ?? sandboxDefaultCatalogError)!)
@@ -3558,7 +3646,11 @@ export function NewChatLandingScreen() {
         ? hostCodexModelsError
         : selectedNativeHarness === "devin-native"
           ? hostDevinModelsError
-          : null;
+          : selectedNativeHarness === "antigravity-native"
+            ? hostAntigravityModelsError
+            : selectedNativeHarness === "opencode-native"
+              ? hostOpencodeModelsError
+              : null;
   const modelCatalogLookupEnabled = sandboxSelected
     ? sandboxPreviewEnabled && sandboxInferenceConfigured
     : selectedNativeHarness !== null && canLoadHostModels(selectedNativeHarness);
@@ -3623,6 +3715,8 @@ export function NewChatLandingScreen() {
               claude: availableClaudeModels,
               codex: availableCodexModels,
               pi: availablePiModels,
+              antigravity: availableAntigravityModels,
+              opencode: availableOpencodeModels,
             },
           }
         : null,
@@ -3635,6 +3729,8 @@ export function NewChatLandingScreen() {
       availableClaudeModels,
       availableCodexModels,
       availablePiModels,
+      availableAntigravityModels,
+      availableOpencodeModels,
     ],
   );
   useEffect(() => {
@@ -3693,7 +3789,24 @@ export function NewChatLandingScreen() {
                 codexModelOptions,
                 pickedModel || codexModelOptions.find((option) => option.isDefault)?.id,
               ).map((value) => ({ value, label: normalizeEffortLabel(value) }))
-            : [];
+            : selectedNativeHarness === "antigravity-native"
+              ? pickedModel.startsWith("claude-")
+                ? []
+                : [
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                  ]
+              : selectedNativeHarness === "opencode-native"
+                ? // No native effort axis: the rungs select a model tier
+                  // server-side (low/medium/high → longcat/deepseek/muse),
+                  // mirroring the operator's router tiers.
+                  [
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                  ]
+                : [];
   const rememberPickerOptions = (harness: string, options: HarnessOptions) => {
     const previous = pickerEdits;
     setPickerEdits({
@@ -3747,7 +3860,9 @@ export function NewChatLandingScreen() {
         effortModel,
       ).includes(pickedEffort)
         ? ""
-        : pickedEffort;
+        : selectedNativeHarness === "antigravity-native" && picked.startsWith("claude-")
+          ? ""
+          : pickedEffort;
     setPickedModel(picked);
     setPickedEffort(effort);
     setCostControlMode(null);
@@ -3996,6 +4111,7 @@ export function NewChatLandingScreen() {
     "codex-native": availableCodexModels,
     "pi-native": availablePiModels,
     "devin-native": hostDevinModelOptions,
+    "opencode-native": availableOpencodeModels,
   };
   const pickerEntrySummaries = Object.fromEntries(
     [...harnessEntries, ...agentEntries].map((agent) => {
@@ -4017,7 +4133,9 @@ export function NewChatLandingScreen() {
               ? piModelOptions
               : native.iconKind === "devin"
                 ? devinModelOptions
-                : [];
+                : native.iconKind === "opencode"
+                  ? opencodeModelOptions
+                  : [];
       const savedFusion = fusionOption(catalog)?.fusion;
       // Preserve saved IDs while host data is absent; an empty result is authoritative.
       const hostCatalogUnavailable =
@@ -4120,7 +4238,9 @@ export function NewChatLandingScreen() {
           ? devinModelOptions
           : selectedNativeHarness === "codex-native"
             ? codexModelOptions
-            : [];
+            : selectedNativeHarness === "opencode-native"
+              ? opencodeModelOptions
+              : [];
   const projectDefaultModelValid =
     projectDefaultModel != null && projectModelVocab.some((m) => m.id === projectDefaultModel)
       ? projectDefaultModel
@@ -4175,6 +4295,19 @@ export function NewChatLandingScreen() {
       );
       setPickedEffort(
         stored.effort != null && PI_NATIVE_EFFORTS.some((e) => e.value === stored.effort)
+          ? stored.effort
+          : "",
+      );
+    }
+    if (selectedNativeHarness === "opencode-native") {
+      setPickedModel(
+        projectSeed(opencodeModelOptions) ??
+          (stored.model != null && opencodeModelOptions.some((model) => model.id === stored.model)
+            ? stored.model
+            : ""),
+      );
+      setPickedEffort(
+        stored.effort != null && ["low", "medium", "high"].includes(stored.effort)
           ? stored.effort
           : "",
       );
@@ -4255,6 +4388,7 @@ export function NewChatLandingScreen() {
     claudeModelOptions,
     codexModelOptions,
     piModelOptions,
+    opencodeModelOptions,
     projectDefaultModel,
   ]);
   useEffect(() => {
@@ -5492,8 +5626,11 @@ export function NewChatLandingScreen() {
         (sandboxDefaultModelsEnabled ||
           agentSupportsPermissionMode ||
           selectedNativeHarness === "pi-native" ||
+          selectedNativeHarness === "antigravity-native" ||
+          selectedNativeHarness === "opencode-native" ||
           nativeAgent?.harness === "codex-native" ||
-          nativeAgent?.harness === "devin-native") &&
+          nativeAgent?.harness === "devin-native" ||
+          nativeAgent?.harness === "opencode-native") &&
         pickedEffort
           ? pickedEffort
           : null;
@@ -5827,7 +5964,10 @@ export function NewChatLandingScreen() {
           supportsAgySkipPermissions: agentSupportsAgySkip,
           supportsModelPicker: agentSupportsModelPicker || nativeAgent?.harness === "codex-native",
           supportsEffortPicker:
-            selectedNativeHarness === "pi-native" || selectedNativeHarness === "codex-native",
+            selectedNativeHarness === "pi-native" ||
+            selectedNativeHarness === "codex-native" ||
+            selectedNativeHarness === "opencode-native" ||
+            selectedNativeHarness === "antigravity-native",
           permissionMode,
           approvalMode,
           bypassSandbox,

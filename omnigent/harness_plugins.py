@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import TypeVar, cast
 
 from omnigent._wrapper_labels import (
+    ANTIGRAVITY_NATIVE_SUBAGENT_WRAPPER_VALUE,
     ANTIGRAVITY_NATIVE_WRAPPER_VALUE,
     CLAUDE_NATIVE_WRAPPER_VALUE,
     CODEX_NATIVE_WRAPPER_VALUE,
@@ -236,6 +237,10 @@ ANTIGRAVITY_NATIVE_CODING_AGENT = NativeCodingAgent(
     agent_name="antigravity-native-ui",
     harness="antigravity-native",
     wrapper_label=ANTIGRAVITY_NATIVE_WRAPPER_VALUE,
+    # agy spawns each sub-agent as its own cascade; the reader mirrors every
+    # child into an Omnigent session stamped with this label (see
+    # omnigent.harnesses.antigravity_native.reader._register_subagent_child).
+    subagent_wrapper_label=ANTIGRAVITY_NATIVE_SUBAGENT_WRAPPER_VALUE,
     terminal_name="antigravity",
 )
 
@@ -447,7 +452,11 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         _EF.GEMINI,
         _MF.GEMINI,
         _AU.OWN_AUTH,
-        subagents=False,
+        # agy spawns each sub-agent as its own cascade and the reader mirrors
+        # every one into an Omnigent child session (see
+        # omnigent.harnesses.antigravity_native.reader._maybe_mirror_subagents),
+        # so the capability matches reality.
+        subagents=True,
         interrupt=True,
         streaming=True,
         fork_history=_FH.NONE,
@@ -505,7 +514,7 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
         _IM.NATIVE_SERVER,
         _EL.SSE_PERMISSION,
         _RS.WARM_REATTACH,
-        _EF.NONE,
+        _EF.OPENCODE,
         _MF.MULTI,
         _AU.OWN_AUTH,
         subagents=True,

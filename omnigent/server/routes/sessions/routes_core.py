@@ -130,6 +130,7 @@ from omnigent.server.routes._sessions.helpers import (
     _delete_stored_session_bundle_after_failure,
     _discovery_key,
     _enforce_filesystem_attachment_policy,
+    _env_labels_for_agent_spec,
     _filesystem_attachment_in_history,
     _forward_session_change_to_runner,
     _get_runner_client,
@@ -3591,6 +3592,8 @@ def register_core_routes(
             dropped_label_keys_set.update(
                 key for key in source.labels if key.startswith(MCP_SELECTION_PREFIX)
             )
+            dropped_label_keys_set.add("omnigent.codex.codex_home")
+            dropped_label_keys_set.add("omnigent.antigravity.gemini_dir")
         dropped_label_keys: frozenset[str] = frozenset(dropped_label_keys_set)
 
         # DANGEROUS codex full-bypass. The source's bypass label is always
@@ -3601,6 +3604,9 @@ def register_core_routes(
         # so refuse to stamp it on a non-Codex fork). Stamped via extra_labels,
         # which the store applies AFTER the drop so the opt-in wins.
         extra_labels: dict[str, str] = {}
+        target_env_labels = await asyncio.to_thread(_env_labels_for_agent_spec, base_agent)
+        if target_env_labels:
+            extra_labels.update(target_env_labels)
         if body.codex_bypass_sandbox:
             target_native = await asyncio.to_thread(_native_coding_agent_for_agent, base_agent)
             if target_native is None or target_native.harness != "codex-native":

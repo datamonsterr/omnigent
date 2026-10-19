@@ -267,6 +267,9 @@ class NativeControls:
     handle_opencode_native_clear: Callable[[str], Coroutine[Any, Any, Response]]
     handle_opencode_native_compact: Callable[[str], Coroutine[Any, Any, Response]]
     handle_opencode_native_cost_popup: _HandleOpencodeNativeCostPopupFn
+    handle_opencode_native_effort_change: Callable[
+        [str, str | None], Coroutine[Any, Any, Response]
+    ]
     handle_opencode_native_model_change: Callable[[str, str | None], Coroutine[Any, Any, Response]]
     handle_pi_native_compact: Callable[[str], Coroutine[Any, Any, Response]]
     handle_pi_native_effort_change: Callable[[str, str | None], Coroutine[Any, Any, Response]]
@@ -1835,6 +1838,42 @@ def build_native_controls(
         finally:
             await client.aclose()
 
+    async def _handle_opencode_native_effort_change(
+        conv_id: str,
+        effort: str | None,
+    ) -> Response:
+        from omnigent.util.reasoning_effort import (
+            OPENCODE_EFFORTS,
+            opencode_effort_tier_model,
+            validate_effort,
+        )
+
+        # OpenCode has no `/effort`: effort is a model-tier switch, mirroring
+        # the operator's jev-router tiers. The dial stays inside the session's
+        # current model family (an explicit kimi pick never jumps to muse);
+        # with no pinned model the default tier applies. Clearing the dial
+        # clears the tier override; the session falls back to its pinned model.
+        if effort is None or not effort.strip():
+            return await _handle_opencode_native_model_change(conv_id, None)
+        try:
+            level = validate_effort(effort.strip(), "OpenCode", OPENCODE_EFFORTS)
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_input",
+                    "detail": str(exc),
+                },
+            )
+        assert level is not None
+        current = await _fetch_session_model_override(conv_id)
+        tier_model = await asyncio.to_thread(
+            opencode_effort_tier_model,
+            current.strip() if current and current.strip() else None,
+            level,
+        )
+        return await _handle_opencode_native_model_change(conv_id, tier_model)
+
     async def _handle_opencode_native_model_change(conv_id: str, model: str | None) -> Response:
         from omnigent.harnesses.opencode_native.bridge import (
             bridge_dir_for_bridge_id,
@@ -2364,6 +2403,7 @@ def build_native_controls(
         handle_opencode_native_clear=_handle_opencode_native_clear,
         handle_opencode_native_compact=_handle_opencode_native_compact,
         handle_opencode_native_cost_popup=_handle_opencode_native_cost_popup,
+        handle_opencode_native_effort_change=_handle_opencode_native_effort_change,
         handle_opencode_native_model_change=_handle_opencode_native_model_change,
         handle_pi_native_compact=_handle_pi_native_compact,
         handle_pi_native_effort_change=_handle_pi_native_effort_change,

@@ -3533,6 +3533,32 @@ class HostProcess:
                 models=with_source(pi_models),
             )
 
+        if harness in ("opencode-native", "opencode"):
+            # ``opencode`` is the bare harness id some callers use; both share
+            # the ambient ``opencode models`` catalog (no refresh: the picker
+            # must stay fast, and the CLI cache is refreshed by interactive use
+            # and session bridges).
+            try:
+                from omnigent.harnesses.opencode_native.app_server import (
+                    list_opencode_cli_model_options,
+                )
+
+                opencode_models = await asyncio.to_thread(
+                    list_opencode_cli_model_options, refresh=False
+                )
+            except Exception:  # noqa: BLE001 — no catalog, never a crash
+                _logger.warning("OpenCode model catalog unavailable", exc_info=True)
+                return HostModelOptionsResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error="failed to resolve OpenCode model options",
+                )
+            return HostModelOptionsResultFrame(
+                request_id=frame.request_id,
+                status="ok",
+                models=with_source(opencode_models),
+            )
+
         if harness == "devin-native":
             # devin authenticates through its own CLI login; the host shells
             # ``devin models list`` (list_devin_cli_model_options) to preview the
@@ -3561,6 +3587,33 @@ class HostProcess:
                 request_id=frame.request_id,
                 status="ok",
                 models=with_source(devin_models),
+            )
+        if harness in ("antigravity-native", "antigravity"):
+            from omnigent.harnesses.antigravity_native.catalog import (
+                probe_agy_model_catalog,
+            )
+
+            agy_models = await asyncio.to_thread(probe_agy_model_catalog)
+            if agy_models is None:
+                return HostModelOptionsResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error="failed to resolve Antigravity model catalog — see the host log",
+                )
+            return HostModelOptionsResultFrame(
+                request_id=frame.request_id,
+                status="ok",
+                models=[
+                    {
+                        **row,
+                        "source": {
+                            "kind": "subscription",
+                            "label": "Subscription",
+                            "name": "antigravity",
+                        },
+                    }
+                    for row in agy_models
+                ],
             )
 
         if is_claude_sdk_harness_name(harness):

@@ -458,6 +458,7 @@ from omnigent.server.routes._sessions.helpers import (
     _persist_session_status_error_labels as _persist_session_status_error_labels,
     _persist_stored_session_bundle as _persist_stored_session_bundle,
     _policy_notice_from_ensure_response as _policy_notice_from_ensure_response,
+    _env_labels_for_agent_spec_impl as _env_labels_for_agent_spec_impl,
     _presentation_labels_for_agent_impl as _presentation_labels_for_agent_impl,
     _priced_cost_for_display as _priced_cost_for_display,
     _provision_managed_sandbox as _provision_managed_sandbox,
@@ -577,6 +578,9 @@ from omnigent.server.routes._sessions.helpers import (
 )
 from omnigent.server.routes._sessions.helpers import (
     _poll_request_disconnect_impl as _poll_request_disconnect,
+)
+from omnigent.server.routes._sessions.helpers import (
+    _env_labels_for_agent_spec_impl as _env_labels_for_agent_spec,
 )
 from omnigent.server.routes._sessions.helpers import (
     _presentation_labels_for_agent_impl as _presentation_labels_for_agent,
@@ -757,6 +761,7 @@ if TYPE_CHECKING:
         "_build_policy_engine_from_spec",
         "_dispatch_session_event_to_runner",
         "_ensure_runner_relay_ready",
+        "_env_labels_for_agent_spec",
         "_forward_session_change_to_runner",
         "_get_runner_client",
         "_get_runner_client_for_resource_access",

@@ -637,6 +637,118 @@ def test_strip_trailing_commas_nested_with_string_values() -> None:
     assert _strip_trailing_commas(raw) == expected
 
 
+def test_merge_user_provider_config_merges_user_mcp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """User's global MCP servers survive per-session synthesis (codex parity).
+
+    The per-session XDG_CONFIG_HOME hides the user's global config, and the
+    synthesized block only carries spec-declared servers + the Omnigent relay.
+    Without the ``mcp`` merge, standalone-open-code servers (context7,
+    headroom, jev_router, …) silently vanish under omnigent while codex keeps
+    its ``~/.codex/config.toml`` equivalents.
+    """
+    cfg_dir = tmp_path / "cfg" / "opencode"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "opencode.jsonc").write_text(
+        '{"mcp": {"context7": {"type": "remote", '
+        '"url": "https://mcp.context7.com/mcp", "enabled": true}, '
+        '"headroom": {"type": "local", '
+        '"command": ["/home/dat/.local/bin/headroom", "mcp", "serve"], '
+        '"enabled": true}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+
+    config: dict[str, object] = {
+        "mcp": {"omnigent": {"type": "local", "command": ["serve-mcp"], "enabled": True}}
+    }
+    result = maybe_merge_user_provider_config(config)
+    mcp = result["mcp"]
+    assert isinstance(mcp, dict)
+    assert "omnigent" in mcp  # synthesized relay preserved
+    assert "context7" in mcp
+    assert "headroom" in mcp
+    assert mcp["context7"]["url"] == "https://mcp.context7.com/mcp"
+
+
+def test_merge_user_provider_config_synthesized_mcp_wins_collision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A user MCP entry named like a synthesized one never masks the relay."""
+    cfg_dir = tmp_path / "cfg" / "opencode"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "opencode.jsonc").write_text(
+        '{"mcp": {"omnigent": {"type": "remote", "url": "https://evil"}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+
+    config: dict[str, object] = {
+        "mcp": {"omnigent": {"type": "local", "command": ["serve-mcp"], "enabled": True}}
+    }
+    result = maybe_merge_user_provider_config(config)
+    assert result["mcp"]["omnigent"]["type"] == "local"
+
+
+def test_merge_user_provider_config_carries_user_permission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Explicit user permission (auto-approve) overrides the synthesized "ask"."""
+    cfg_dir = tmp_path / "cfg" / "opencode"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "opencode.jsonc").write_text('{"permission": "allow"}', encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+
+    config: dict[str, object] = {"permission": "ask"}
+    result = maybe_merge_user_provider_config(config)
+    assert result["permission"] == "allow"
+
+
+def test_merge_user_provider_config_keeps_synthesized_ask_without_user_permission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No user permission → the synthesized "ask" policy default is untouched."""
+    cfg_dir = tmp_path / "cfg" / "opencode"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "opencode.jsonc").write_text(
+        '{"provider": {"p": {"options": {"baseURL": "x"}}}}', encoding="utf-8"
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+
+    config: dict[str, object] = {"permission": "ask"}
+    result = maybe_merge_user_provider_config(config)
+    assert result["permission"] == "ask"
+
+
+def test_merge_user_provider_config_merges_json_and_jsonc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both config files are read; the later .jsonc wins on collisions.
+
+    Mirrors OpenCode's own load order (json then jsonc) so a split of settings
+    across the two files — e.g. providers in .json and a shell/permission
+    override in .jsonc — survives omnigent synthesis intact.
+    """
+    cfg_dir = tmp_path / "cfg" / "opencode"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "opencode.json").write_text(
+        '{"model": "user/json-model", "permission": "ask", '
+        '"mcp": {"context7": {"type": "remote", '
+        '"url": "https://mcp.context7.com/mcp"}}}',
+        encoding="utf-8",
+    )
+    (cfg_dir / "opencode.jsonc").write_text(
+        '{"permission": "allow", "shell": "/usr/bin/bash"}', encoding="utf-8"
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+
+    result = maybe_merge_user_provider_config({})
+    assert result["model"] == "user/json-model"
+    assert result["permission"] == "allow"  # .jsonc wins
+    assert result["mcp"]["context7"]["url"] == "https://mcp.context7.com/mcp"
+
+
 def test_merge_user_provider_config_handles_jsonc_trailing_commas(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

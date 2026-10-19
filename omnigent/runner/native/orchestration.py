@@ -661,6 +661,7 @@ class _CodexNativeLaunchConfig:
     turn_routing: bool = False
     reasoning_effort: str | None = None
     bridge_id: str | None = None
+    codex_home_override: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1416,6 +1417,7 @@ async def _codex_native_launch_config(
     # conversation label ("1" to enable). Read here so the runner applies
     # it at launch; any other value (incl. absent) leaves the normal stance.
     bypass_sandbox = False
+    codex_home_override: str | None = None
     labels = snapshot.get("labels")
     if isinstance(labels, dict):
         _fsi = labels.get(FORK_SOURCE_LABEL_KEY)
@@ -1430,6 +1432,9 @@ async def _codex_native_launch_config(
         _bid = labels.get(CODEX_NATIVE_BRIDGE_ID_LABEL_KEY)
         if isinstance(_bid, str) and _bid:
             bridge_id = _bid
+        _cho = labels.get("omnigent.codex.codex_home") or labels.get("codex_home")
+        if isinstance(_cho, str) and _cho:
+            codex_home_override = _cho
     # One derivation of the session's Smart Routing class, shared with the SDK
     # codex path, so "pinned" and "auto-harness" mean the same on both.
     routing_class = routing_class_from_snapshot(
@@ -1452,6 +1457,7 @@ async def _codex_native_launch_config(
         turn_routing=routing_class.turn_routing,
         reasoning_effort=reasoning_effort,
         bridge_id=bridge_id,
+        codex_home_override=codex_home_override,
     )
 
 
@@ -1518,6 +1524,32 @@ async def _opencode_native_launch_config(
         not isinstance(external_session_id, str) or not external_session_id
     ):
         raise RuntimeError(f"Invalid external_session_id for OpenCode session {session_id!r}.")
+    if model_override:
+        # OpenCode has no native effort axis: a launch-time effort selects a
+        # model tier inside the explicitly picked model's family (same tiers
+        # as the in-session effort dial and the operator's router). With no
+        # explicit pick the agent spec / harness default rules untouched, so a
+        # remembered dial can never silently downgrade a pinned orchestrator.
+        from omnigent.util.reasoning_effort import (
+            OPENCODE_EFFORTS,
+            opencode_effort_tier_model,
+            validate_effort,
+        )
+
+        launch_effort = snapshot.get("reasoning_effort")
+        if isinstance(launch_effort, str) and launch_effort.strip():
+            try:
+                level = validate_effort(launch_effort.strip(), "opencode", OPENCODE_EFFORTS)
+            except ValueError:
+                _logger.warning(
+                    "Ignoring unsupported reasoning_effort %r for OpenCode session %s",
+                    launch_effort,
+                    session_id,
+                    extra={"session_id": session_id},
+                )
+            else:
+                assert level is not None
+                model_override = opencode_effort_tier_model(model_override, level)
     session_workspace = snapshot.get("workspace")
     if session_workspace is not None and (
         not isinstance(session_workspace, str) or not session_workspace
@@ -5020,8 +5052,18 @@ async def _auto_create_codex_terminal(
     # machine-level config, parity with the in-process harness (#2744).
     _launch_spec = agent_spec.spec if isinstance(agent_spec, ResolvedSpec) else agent_spec
     _codex_terminal_args = launch_config.terminal_launch_args or ()
+    from omnigent.inner.codex_executor import _codex_home_config_source_from_env
+
+    _source_codex_home = (
+        Path(launch_config.codex_home_override).expanduser().resolve()
+        if launch_config.codex_home_override
+        else _codex_home_config_source_from_env()
+    )
     _codex_launch = resolve_native_codex_launch(
-        model=default_model, spec=_launch_spec, terminal_launch_args=_codex_terminal_args
+        model=default_model,
+        spec=_launch_spec,
+        terminal_launch_args=_codex_terminal_args,
+        source_codex_home=_source_codex_home,
     )
     from omnigent.inference_config import binding_for_harness, load_runtime_inference_config
 
@@ -5037,6 +5079,7 @@ async def _auto_create_codex_terminal(
             model=None,
             spec=_launch_spec,
             terminal_launch_args=_codex_terminal_args,
+            source_codex_home=_source_codex_home,
         )
         _fresh_codex_catalog = fresh_codex_launch_catalog(
             codex_path=_codex_cli_path,
@@ -5121,6 +5164,7 @@ async def _auto_create_codex_terminal(
                     model=fallback_model,
                     spec=_launch_spec,
                     terminal_launch_args=_codex_terminal_args,
+                    source_codex_home=_source_codex_home,
                 )
                 pick_to_reset = pick if fresh_rows else None
                 outcome = (
@@ -5389,11 +5433,16 @@ async def _auto_create_codex_terminal(
         # Native Codex honors $CODEX_HOME; seed skills from that resolved home
         # (not a hardcoded ~/.codex) so the terminal and the web menu list the
         # same host skills.
+        _source_codex_home = (
+            Path(launch_config.codex_home_override).expanduser().resolve()
+            if launch_config.codex_home_override
+            else _codex_home_config_source_from_env()
+        )
         populate_codex_skills_from_bundle(
             codex_home,
             bundle_dir,
             skills_filter,
-            source_codex_home=_codex_home_config_source_from_env(),
+            source_codex_home=_source_codex_home,
         )
     except OSError:
         _logger.warning(
@@ -5496,6 +5545,8 @@ async def _auto_create_codex_terminal(
         # app-servers. A targeted same-session reap remains synchronous only
         # for the resume path where an old writer can block correctness.
         reconcile_process_registry=False,
+        codex_path=_codex_cli_path,
+        source_codex_home=_source_codex_home,
     )
     # Generate routing hooks.json (and bypass codex's hook-trust prompt): the
     # app-server reads the endpoint out of its own process env at start, and
@@ -6632,6 +6683,21 @@ async def _auto_create_antigravity_terminal(
     # ``--gemini_dir``; seeding the real ``~/.gemini`` marker as well would write
     # the user's tree for a file this launch never reads.
 
+    # Forward reasoning effort (--effort) when set and model is not Claude.
+    reasoning_effort = snapshot.get("reasoning_effort")
+    if reasoning_effort and isinstance(reasoning_effort, str):
+        is_claude = bool(model and (model.startswith("claude-") or "claude" in model.lower()))
+        if not is_claude:
+            if not any(a == "--effort" or a.startswith("--effort=") for a in terminal_launch_args):
+                terminal_launch_args = (*terminal_launch_args, "--effort", reasoning_effort)
+
+    # Custom gemini_dir from agent config / session labels.
+    source_gemini_dir: str | None = None
+    if isinstance(labels, dict):
+        source_gemini_dir = labels.get("omnigent.antigravity.gemini_dir") or labels.get(
+            "gemini_dir"
+        )
+
     argv, env_overrides = build_agy_launch(
         conversation_id=external_session_id if resume else None,
         model=model,
@@ -6665,6 +6731,7 @@ async def _auto_create_antigravity_terminal(
             seed_isolated_agy_home,
             bridge_dir,
             trusted_workspace=workspace,
+            source_gemini_dir=source_gemini_dir,
         ),
     }
     # agy's periodic feedback survey shares its "esc to cancel" footer with the
