@@ -109,7 +109,12 @@ class AccountPoolManager:
     ) -> None:
         self.config = config or AccountPoolsConfig()
         self.reservation_tracker = reservation_tracker or AccountReservationTracker()
-        self.quota_provider = quota_provider
+        if quota_provider is None:
+            from omnigent.account_pools.quota import get_default_quota_provider
+
+            self.quota_provider = get_default_quota_provider()
+        else:
+            self.quota_provider = quota_provider
 
     def count_active_sessions(
         self,
@@ -136,6 +141,7 @@ class AccountPoolManager:
             else:
                 items = getattr(paged, "data", getattr(paged, "items", []))
             count = 0
+            now = int(time.time())
             for conv in items:
                 labels = conv.labels or {}
                 conv_acc = labels.get(ACCOUNT_ID_LABEL_KEY) or labels.get("account_id")
@@ -158,6 +164,11 @@ class AccountPoolManager:
                     if runner_seen is not None and not runner_seen_is_fresh(runner_seen):
                         continue
                     count += 1
+                elif live_st is None:
+                    # Session in launch window before runner has reported live_status
+                    created_at = getattr(conv, "created_at", None)
+                    if created_at is not None and (now - created_at) < 120:
+                        count += 1
             return count
         except Exception:  # noqa: BLE001 - fallback to 0 active count on store read failure
             return 0
