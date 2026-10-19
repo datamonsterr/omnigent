@@ -10728,6 +10728,8 @@ async def _create_session_from_existing_agent(
                 from omnigent.account_pools.manager import AccountPoolManager
 
                 account_pool_mgr = AccountPoolManager(config=caps.account_pools)
+                if app_state is not None:
+                    app_state.account_pool_manager = account_pool_mgr
 
         if account_pool_mgr is None and spec_for_env is not None:
             exec_cfg = getattr(spec_for_env.executor, "config", None)
@@ -10745,23 +10747,25 @@ async def _create_session_from_existing_agent(
                 prepare_session_account,
             )
 
-            try:
-                reservation_handle = prepare_session_account(
-                    initial_labels=initial_labels,
-                    harness=selected_harness,
-                    sub_agent_name=body.sub_agent_name,
-                    agent_spec=spec_for_env,
-                    manager=account_pool_mgr,
-                    conversation_store=conversation_store,
-                )
-            except AccountPoolExhaustedError as exc:
-                raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
-            except ValueError as exc:
-                raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+            reservation_handle = prepare_session_account(
+                initial_labels=initial_labels,
+                harness=selected_harness,
+                sub_agent_name=body.sub_agent_name,
+                agent_spec=spec_for_env,
+                manager=account_pool_mgr,
+                conversation_store=conversation_store,
+            )
+    except AccountPoolExhaustedError as exc:
+        raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+    except ValueError as exc:
+        raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
     except OmnigentError:
         raise
-    except Exception as exc:  # noqa: BLE001 - account pool failure must not crash server without log
-        _logger.warning("Account pool assignment error: %s", exc, exc_info=True)
+    except Exception as exc:
+        raise OmnigentError(
+            f"Failed to assign account from pool: {exc}",
+            code=ErrorCode.INVALID_INPUT,
+        ) from exc
 
     snapshot_kwargs: dict[str, Any] = (
         {"inference_snapshot": inference_snapshot} if inference_snapshot is not None else {}
@@ -10800,8 +10804,6 @@ async def _create_session_from_existing_agent(
                 harness_override=harness_override,
                 **snapshot_kwargs,
             )
-        if reservation_handle is not None and account_pool_mgr is not None:
-            account_pool_mgr.reservation_tracker.release(reservation_handle)
     except NameAlreadyExistsError as exc:
         if reservation_handle is not None and account_pool_mgr is not None:
             account_pool_mgr.reservation_tracker.release(reservation_handle)
@@ -11049,6 +11051,8 @@ async def _create_session_from_existing_agent(
         conversation=conv,
         request=request,
     )
+    if reservation_handle is not None and account_pool_mgr is not None:
+        account_pool_mgr.reservation_tracker.release(reservation_handle)
     return response, conv
 
 

@@ -1838,6 +1838,13 @@ def create_app(
     app.state.sandbox_config = sandbox_config
     app.state.branding_snapshot = branding_snapshot
     app.state.feature_flags = resolved_feature_flags
+    from omnigent.runtime import get_caps
+
+    _caps = get_caps()
+    if _caps and getattr(_caps, "account_pools", None):
+        from omnigent.account_pools.manager import AccountPoolManager
+
+        app.state.account_pool_manager = AccountPoolManager(config=_caps.account_pools)
     # Deployment base path (e.g. "/proxy/6767"), so route handlers that build
     # a full-page redirect (not covered by BasePathMiddleware's inbound-only
     # strip) can prefix it themselves. "" for a root deployment.
