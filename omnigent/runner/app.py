@@ -6542,7 +6542,13 @@ def create_runner_app(
                 _session_reasoning_effort[conversation_id] = effort
             else:
                 _session_reasoning_effort.pop(conversation_id, None)
-            if harness in ("claude-native", "codex-native", "pi-native", "devin-native"):
+            if harness in (
+                "claude-native",
+                "codex-native",
+                "pi-native",
+                "devin-native",
+                "opencode-native",
+            ):
                 if harness == "codex-native":
                     return await _handle_codex_native_settings_update(
                         conversation_id,
@@ -6555,6 +6561,11 @@ def create_runner_app(
                     )
                 if harness == "devin-native":
                     return await _handle_devin_native_effort_change(
+                        conversation_id,
+                        effort,
+                    )
+                if harness == "opencode-native":
+                    return await _handle_opencode_native_effort_change(
                         conversation_id,
                         effort,
                     )
@@ -7046,6 +7057,7 @@ def create_runner_app(
     _handle_opencode_native_clear = _native_controls.handle_opencode_native_clear
     _handle_opencode_native_compact = _native_controls.handle_opencode_native_compact
     _handle_opencode_native_cost_popup = _native_controls.handle_opencode_native_cost_popup
+    _handle_opencode_native_effort_change = _native_controls.handle_opencode_native_effort_change
     _handle_opencode_native_model_change = _native_controls.handle_opencode_native_model_change
     _handle_pi_native_compact = _native_controls.handle_pi_native_compact
     _handle_pi_native_effort_change = _native_controls.handle_pi_native_effort_change

@@ -240,6 +240,7 @@ from omnigent.server.routes._sessions.helpers import (
     _create_and_publish_antigravity_child,
     _create_and_publish_codex_child,
     _create_and_publish_devin_child,
+    _create_and_publish_opencode_child,
     _create_session_worktree,
     _delete_stored_session_bundle_after_failure,
     _derive_terminal_launch_args_from_spec,
@@ -282,6 +283,8 @@ from omnigent.server.routes._sessions.helpers import (
     _native_terminal_failure_from_runner_response,
     _native_terminal_name_for_harness,
     _NativeTerminalEnsureOutcome,
+    _opencode_subagent_labels_from_body,
+    _opencode_subagent_title,
     _owner_from_grants,
     _parse_external_conversation_item,
     _pending_elicitation_snapshot_for_session,
@@ -2586,6 +2589,71 @@ async def _persist_external_antigravity_subagent_start(
         parent_conv,
         title,
         agent_type if isinstance(agent_type, str) else "",
+        labels,
+        conversation_store,
+    )
+
+
+async def _persist_external_opencode_subagent_start(
+    parent_id: str,
+    parent_conv: Conversation,
+    body: SessionEventInput,
+    conversation_store: ConversationStore,
+) -> str:
+    """
+    Mint or update a child Conversation for an OpenCode sub-agent.
+
+    opencode runs each ``task`` sub-agent in its own child session (its parts
+    stream with the child's ``sessionID``); the forwarder posts one of these
+    per child so the Agents rail can show it. The child already has a stable
+    opencode session id, so that id is both the label and the title's unique
+    half — like the agy cascade id.
+
+    Idempotent: a redelivered start for the same ``session_id`` resolves to the
+    existing row (by title) and upserts labels rather than minting a duplicate.
+
+    :param parent_id: Parent opencode-native conversation id, e.g.
+        ``"conv_parent987"``.
+    :param parent_conv: Pre-fetched parent row.
+    :param body: POST event body. Required ``data.session_id``; optional
+        ``agent``, ``prompt``.
+    :param conversation_store: Store for reading/creating child rows.
+    :returns: Child conversation id, e.g. ``"conv_child456"``.
+    :raises OmnigentError: 400 if ``session_id`` is missing, or the parent has
+        no bound agent.
+    """
+    opencode_session_id = body.data.get("session_id")
+    if not isinstance(opencode_session_id, str) or not opencode_session_id:
+        raise OmnigentError(
+            "external_opencode_subagent_start requires non-empty data.session_id",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if parent_conv.agent_id is None:
+        raise OmnigentError(
+            f"parent session {parent_id!r} has no agent_id; cannot "
+            "create an opencode-native sub-agent child",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    agent = body.data.get("agent")
+    title = _opencode_subagent_title(
+        agent if isinstance(agent, str) else "",
+        opencode_session_id,
+    )
+    labels = _opencode_subagent_labels_from_body(opencode_session_id, body)
+    existing = await asyncio.to_thread(
+        _find_subagent_child_by_title, conversation_store, parent_id, title
+    )
+    if existing is not None:
+        await asyncio.to_thread(conversation_store.set_labels, existing.id, labels)
+        await record_subagent_activity(
+            existing.id, "delegated", conversation_store, parent_id=parent_id
+        )
+        return existing.id
+    return await _create_and_publish_opencode_child(
+        parent_id,
+        parent_conv,
+        title,
+        agent if isinstance(agent, str) else "",
         labels,
         conversation_store,
     )
@@ -10538,8 +10606,9 @@ async def _create_session_from_existing_agent(
     own_spec: AgentSpec | None = None
     needs_launch_args_from_spec = not body.sub_agent_name and validated_launch_args is None
     needs_effort_from_spec = reasoning_effort is None and sub_spec is None
+    needs_env_from_spec = not body.sub_agent_name
     if (
-        (needs_launch_args_from_spec or needs_effort_from_spec)
+        (needs_launch_args_from_spec or needs_effort_from_spec or needs_env_from_spec)
         and agent_cache is not None
         and agent.bundle_location is not None
     ):

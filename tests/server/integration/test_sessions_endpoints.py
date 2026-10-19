@@ -11403,6 +11403,122 @@ async def test_external_antigravity_subagent_start_title_survives_a_colon_in_the
     assert child["labels"]["omnigent.antigravity_native.agent_role"] == "Review: routing and auth"
 
 
+# ── POST /v1/sessions/{id}/events external_opencode_subagent_start ────────────
+
+
+async def test_external_opencode_subagent_start_mints_child_session(
+    client: httpx.AsyncClient,
+) -> None:
+    """
+    ``external_opencode_subagent_start`` creates a child session whose rail
+    row names the sub-agent opencode spawned.
+
+    opencode runs each ``task`` sub-agent in its own child session; the
+    forwarder posts this so the Agents rail can show it. The rail's generic
+    ``"<head>:<tail>"`` title split does the display work, so the title is
+    built to survive that split (same shape as the agy children).
+
+    :param client: The test HTTP client.
+    """
+    agent = await create_test_agent(client)
+    parent = await _create_session(
+        client,
+        agent["id"],
+        labels={"omnigent.wrapper": "opencode-native-ui"},
+    )
+
+    resp = await client.post(
+        f"/v1/sessions/{parent['id']}/events",
+        json={
+            "type": "external_opencode_subagent_start",
+            "data": {"session_id": "ses_child_alpha", "agent": "build"},
+        },
+    )
+
+    assert resp.status_code == 202, f"unexpected status {resp.status_code}: {resp.text}"
+    child_id = resp.json()["child_session_id"]
+
+    children_resp = await client.get(f"/v1/sessions/{parent['id']}/child_sessions")
+    assert children_resp.status_code == 200
+    child = next(
+        (c for c in children_resp.json()["data"] if c["id"] == child_id),
+        None,
+    )
+    assert child is not None, "Child session must appear in child_sessions listing"
+    assert child["tool"] == "build", (
+        f"Expected the rail to name the sub-agent; got {child['tool']!r}"
+    )
+    assert child["session_name"] == "ses_child_alpha", (
+        f"Expected session_name=opencode session id; got {child['session_name']!r}"
+    )
+    labels = child["labels"]
+    assert labels["omnigent.wrapper"] == "opencode-native-ui-subagent"
+    assert (
+        labels["omnigent.opencode_native.subagent_session_id"] == "ses_child_alpha"
+    )
+    assert labels["omnigent.opencode_native.subagent_agent"] == "build"
+
+
+async def test_external_opencode_subagent_start_is_idempotent(
+    client: httpx.AsyncClient,
+) -> None:
+    """
+    Re-registering the same opencode sub-agent returns the existing child row.
+
+    A runner restart replays the child's first part, so this POST repeats; each
+    repeat must resolve to the same row rather than filling the rail with
+    duplicates.
+    """
+    agent = await create_test_agent(client)
+    parent = await _create_session(
+        client,
+        agent["id"],
+        labels={"omnigent.wrapper": "opencode-native-ui"},
+    )
+    payload = {
+        "type": "external_opencode_subagent_start",
+        "data": {"session_id": "ses_child_beta", "agent": "review"},
+    }
+
+    first = await client.post(f"/v1/sessions/{parent['id']}/events", json=payload)
+    assert first.status_code == 202, first.text
+    second = await client.post(f"/v1/sessions/{parent['id']}/events", json=payload)
+    assert second.status_code == 202, second.text
+
+    assert first.json()["child_session_id"] == second.json()["child_session_id"], (
+        "A repeated registration must resolve to the same child session"
+    )
+    children = (await client.get(f"/v1/sessions/{parent['id']}/child_sessions")).json()["data"]
+    matching = [c for c in children if c["session_name"] == "ses_child_beta"]
+    assert len(matching) == 1, f"Expected exactly 1 child row; got {len(matching)}"
+
+
+async def test_external_opencode_subagent_start_requires_session_id(
+    client: httpx.AsyncClient,
+) -> None:
+    """
+    A registration with no ``session_id`` is rejected rather than minting an
+    unaddressable child.
+
+    The opencode session id is what the mirror addresses and what makes the
+    row idempotent; a child without one could never be filled in.
+    """
+    agent = await create_test_agent(client)
+    parent = await _create_session(
+        client,
+        agent["id"],
+        labels={"omnigent.wrapper": "opencode-native-ui"},
+    )
+
+    resp = await client.post(
+        f"/v1/sessions/{parent['id']}/events",
+        json={"type": "external_opencode_subagent_start", "data": {"agent": "build"}},
+    )
+    assert resp.status_code == 400, (
+        f"Expected 400 for a missing session_id; got {resp.status_code}: {resp.text[:200]}"
+    )
+
+
 async def test_external_codex_subagent_start_adopts_unlabeled_title_collision(
     client: httpx.AsyncClient,
 ) -> None:

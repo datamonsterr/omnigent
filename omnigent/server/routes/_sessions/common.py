@@ -24,6 +24,7 @@ from omnigent._platform import normalize_interactive_shells
 from omnigent._wrapper_labels import (
     ACP_SUBAGENT_ID_LABEL_KEY,
     ANTIGRAVITY_NATIVE_SUBAGENT_WRAPPER_VALUE,
+    OPENCODE_NATIVE_SUBAGENT_WRAPPER_VALUE,
     WRAPPER_LABEL_KEY,
 )
 from omnigent.db.db_models import LABEL_VALUE_MAX_LEN
@@ -355,6 +356,30 @@ _CODEX_NATIVE_MODEL = CODEX_NATIVE_CODING_AGENT.agent_name
 _OPENCODE_NATIVE_WRAPPER_LABEL_VALUE = OPENCODE_NATIVE_CODING_AGENT.wrapper_label
 
 
+_EXTERNAL_OPENCODE_SUBAGENT_START_TYPE: str = "external_opencode_subagent_start"
+
+
+_OPENCODE_NATIVE_SUBAGENT_WRAPPER_LABEL_VALUE = OPENCODE_NATIVE_SUBAGENT_WRAPPER_VALUE
+
+
+# Label keys stamped on a mirrored OpenCode child row. The opencode session id
+# is opencode's own stable per-sub-agent id and doubles as the idempotency key,
+# so a redelivered ``external_opencode_subagent_start`` resolves to the same
+# child instead of minting a duplicate.
+_OPENCODE_NATIVE_SUBAGENT_SESSION_ID_LABEL_KEY = "omnigent.opencode_native.subagent_session_id"
+
+
+_OPENCODE_NATIVE_SUBAGENT_AGENT_LABEL_KEY = "omnigent.opencode_native.subagent_agent"
+
+
+_OPENCODE_NATIVE_SUBAGENT_PROMPT_LABEL_KEY = "omnigent.opencode_native.subagent_prompt"
+
+
+# Title head for an opencode sub-agent whose opencode session/agent carrier
+# named no usable name (the Agents rail splits a child title on its first colon).
+_OPENCODE_NATIVE_SUBAGENT_DISPLAY_FALLBACK = "subagent"
+
+
 _CURSOR_NATIVE_WRAPPER_LABEL_VALUE = CURSOR_NATIVE_CODING_AGENT.wrapper_label
 
 
@@ -570,6 +595,7 @@ _ALLOWED_EVENT_TYPES: frozenset[str] = frozenset(ITEM_TYPE_TO_DATA_CLS.keys()) |
     _EXTERNAL_ACP_SUBAGENT_START_TYPE,
     _EXTERNAL_CODEX_SUBAGENT_START_TYPE,
     _EXTERNAL_ANTIGRAVITY_SUBAGENT_START_TYPE,
+    _EXTERNAL_OPENCODE_SUBAGENT_START_TYPE,
     _EXTERNAL_DEVIN_SUBAGENT_START_TYPE,
     _EXTERNAL_CODEX_COLLABORATION_MODE_CHANGE_TYPE,
     _EXTERNAL_CODEX_APPROVAL_MODE_CHANGE_TYPE,
@@ -1124,6 +1150,7 @@ __all__ = [
     "_EXTERNAL_MCP_STARTUP_TYPE",
     "_EXTERNAL_MODEL_CHANGE_TYPE",
     "_EXTERNAL_MODEL_OPTIONS_TYPE",
+    "_EXTERNAL_OPENCODE_SUBAGENT_START_TYPE",
     "_EXTERNAL_OUTPUT_REASONING_DELTA_TYPE",
     "_EXTERNAL_OUTPUT_TEXT_DELTA_TYPE",
     "_EXTERNAL_PERMISSION_MODE_CHANGE_TYPE",
@@ -1171,6 +1198,11 @@ __all__ = [
     "_NATIVE_POLICY_NOT_ENFORCED_CODE",
     "_NATIVE_TERMINAL_ENSURE_FAILED_CODE",
     "_NATIVE_TERMINAL_START_FAILED_CODE",
+    "_OPENCODE_NATIVE_SUBAGENT_AGENT_LABEL_KEY",
+    "_OPENCODE_NATIVE_SUBAGENT_DISPLAY_FALLBACK",
+    "_OPENCODE_NATIVE_SUBAGENT_PROMPT_LABEL_KEY",
+    "_OPENCODE_NATIVE_SUBAGENT_SESSION_ID_LABEL_KEY",
+    "_OPENCODE_NATIVE_SUBAGENT_WRAPPER_LABEL_VALUE",
     "_OPENCODE_NATIVE_WRAPPER_LABEL_VALUE",
     "_PI_NATIVE_WRAPPER_LABEL_VALUE",
     "_RACE_TASK_REAP_TIMEOUT_S",

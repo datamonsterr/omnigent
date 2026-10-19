@@ -642,3 +642,78 @@ async def test_apply_codex_thread_effort_updates_the_loaded_thread(
     assert requests == [
         ("thread/settings/update", {"threadId": "thread_abc", "effort": expected_effort})
     ]
+
+
+@pytest.mark.asyncio
+async def test_codex_native_app_server_uses_source_codex_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When source_codex_home is specified, seed auth and config from that custom path."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from omnigent.harnesses.codex_native.app_server import build_codex_native_server
+
+    custom_home = tmp_path / "custom_account"
+    custom_home.mkdir(parents=True)
+    (custom_home / "auth.json").write_text('{"OPENAI_API_KEY": "custom-key"}', encoding="utf-8")
+    (custom_home / "config.toml").write_text('model = "custom-model"\n', encoding="utf-8")
+
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server._find_codex_cli",
+        lambda: sys.executable,
+    )
+    bridge_dir = tmp_path / "bridge"
+    bridge_dir.mkdir()
+    session_home = tmp_path / "session_home"
+
+    app_server = build_codex_native_server(
+        socket_path=tmp_path / "codex.sock",
+        codex_home=session_home,
+        cwd=tmp_path,
+        model=None,
+        profile=None,
+        bridge_dir=bridge_dir,
+        source_codex_home=custom_home,
+    )
+    assert app_server.source_codex_home == custom_home
+
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server._codex_cli_version",
+        AsyncMock(return_value=None),
+    )
+    mock_proc = MagicMock(pid=12345, returncode=None)
+    mock_proc.stderr = MagicMock()
+    mock_proc.stderr.read = AsyncMock(return_value=b"")
+    mock_proc.terminate = MagicMock()
+    mock_proc.wait = AsyncMock()
+    monkeypatch.setattr(
+        "asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    )
+    startup_client = MagicMock()
+    startup_client.close = AsyncMock()
+    monkeypatch.setattr(
+        app_server,
+        "_wait_until_ready",
+        AsyncMock(return_value=startup_client),
+    )
+    monkeypatch.setattr(
+        app_server,
+        "_trust_policy_hooks",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server.register_codex_native_process",
+        MagicMock(),
+    )
+
+    await app_server.start()
+
+    auth_file = session_home / "auth.json"
+    assert auth_file.is_symlink()
+    assert auth_file.resolve() == (custom_home / "auth.json").resolve()
+    assert (session_home / "config.toml").is_file()
+
+    await app_server.close()
+

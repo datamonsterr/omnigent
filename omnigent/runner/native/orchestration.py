@@ -1439,6 +1439,32 @@ async def _opencode_native_launch_config(
         not isinstance(external_session_id, str) or not external_session_id
     ):
         raise RuntimeError(f"Invalid external_session_id for OpenCode session {session_id!r}.")
+    if model_override:
+        # OpenCode has no native effort axis: a launch-time effort selects a
+        # model tier inside the explicitly picked model's family (same tiers
+        # as the in-session effort dial and the operator's router). With no
+        # explicit pick the agent spec / harness default rules untouched, so a
+        # remembered dial can never silently downgrade a pinned orchestrator.
+        from omnigent.util.reasoning_effort import (
+            OPENCODE_EFFORTS,
+            opencode_effort_tier_model,
+            validate_effort,
+        )
+
+        launch_effort = snapshot.get("reasoning_effort")
+        if isinstance(launch_effort, str) and launch_effort.strip():
+            try:
+                level = validate_effort(launch_effort.strip(), "opencode", OPENCODE_EFFORTS)
+            except ValueError:
+                _logger.warning(
+                    "Ignoring unsupported reasoning_effort %r for OpenCode session %s",
+                    launch_effort,
+                    session_id,
+                    extra={"session_id": session_id},
+                )
+            else:
+                assert level is not None
+                model_override = opencode_effort_tier_model(model_override, level)
     session_workspace = snapshot.get("workspace")
     if session_workspace is not None and (
         not isinstance(session_workspace, str) or not session_workspace
@@ -4844,8 +4870,18 @@ async def _auto_create_codex_terminal(
     # machine-level config, parity with the in-process harness (#2744).
     _launch_spec = agent_spec.spec if isinstance(agent_spec, ResolvedSpec) else agent_spec
     _codex_terminal_args = launch_config.terminal_launch_args or ()
+    from omnigent.inner.codex_executor import _codex_home_config_source_from_env
+
+    _source_codex_home = (
+        Path(launch_config.codex_home_override).expanduser().resolve()
+        if launch_config.codex_home_override
+        else _codex_home_config_source_from_env()
+    )
     _codex_launch = resolve_native_codex_launch(
-        model=default_model, spec=_launch_spec, terminal_launch_args=_codex_terminal_args
+        model=default_model,
+        spec=_launch_spec,
+        terminal_launch_args=_codex_terminal_args,
+        source_codex_home=_source_codex_home,
     )
     from omnigent.inference_config import binding_for_harness, load_runtime_inference_config
 
@@ -4861,6 +4897,7 @@ async def _auto_create_codex_terminal(
             model=None,
             spec=_launch_spec,
             terminal_launch_args=_codex_terminal_args,
+            source_codex_home=_source_codex_home,
         )
         _fresh_codex_catalog = fresh_codex_launch_catalog(
             codex_path=_codex_cli_path,
@@ -4936,6 +4973,7 @@ async def _auto_create_codex_terminal(
                     model=unpinned_model,
                     spec=_launch_spec,
                     terminal_launch_args=_codex_terminal_args,
+                    source_codex_home=_source_codex_home,
                 )
                 pick_to_reset = pick if fresh_rows else None
                 outcome = (
@@ -5293,6 +5331,8 @@ async def _auto_create_codex_terminal(
         # app-servers. A targeted same-session reap remains synchronous only
         # for the resume path where an old writer can block correctness.
         reconcile_process_registry=False,
+        codex_path=_codex_cli_path,
+        source_codex_home=_source_codex_home,
     )
     # Generate routing hooks.json (and bypass codex's hook-trust prompt): the
     # app-server reads the endpoint out of its own process env at start, and

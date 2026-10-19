@@ -4419,6 +4419,11 @@ export function effortLevelsForConv(
     case "antigravity-native-ui":
       if (currentModel?.startsWith("claude-")) return [];
       return ["low", "medium", "high"];
+    case "opencode-native-ui":
+      // No native effort axis: the rungs select a model tier server-side
+      // (low = free routine edits, medium = implementation worker,
+      // high = orchestrator), applied as the session model override.
+      return ["low", "medium", "high"];
     default:
       return EFFORT_LEVELS;
   }

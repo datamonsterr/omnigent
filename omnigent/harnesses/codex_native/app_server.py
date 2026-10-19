@@ -1827,6 +1827,7 @@ class CodexNativeAppServer:
     reconcile_process_registry: bool = True
     config_profile: str | None = None
     session_id: str | None = None
+    source_codex_home: Path | None = None
     stderr_capture_error_type: str | None = field(default=None, init=False)
     _stderr_diagnostics: CodexStderrDiagnostics | None = field(default=None, init=False)
 
@@ -1836,7 +1837,11 @@ class CodexNativeAppServer:
 
         :returns: None.
         """
-        config_source = _codex_home_config_source_from_env()
+        config_source = (
+            self.source_codex_home
+            if self.source_codex_home is not None
+            else _codex_home_config_source_from_env()
+        )
         if self.codex_home.resolve() == config_source.resolve():
             raise ValueError(
                 "Omnigent could not isolate this session's Codex configuration. "
@@ -3052,6 +3057,7 @@ def build_codex_native_server(
     model_catalog_rows: list[_JsonObject] | None = None,
     reconcile_process_registry: bool = True,
     terminal_launch_args: Sequence[str] = (),
+    source_codex_home: Path | str | None = None,
 ) -> CodexNativeAppServer:
     """
     Build a configured native Codex app-server process wrapper.
@@ -3179,6 +3185,9 @@ def build_codex_native_server(
         trust_project=trust_project,
         trust_all_hooks=trust_all_hooks,
         reconcile_process_registry=reconcile_process_registry,
+        source_codex_home=(
+            Path(source_codex_home).expanduser().resolve() if source_codex_home else None
+        ),
     )
 
 
@@ -3530,7 +3539,7 @@ def _first_routable_codex_provider(
     return None
 
 
-def _codex_login_usable() -> bool:
+def _codex_login_usable(*, source_home: Path | None = None) -> bool:
     """Whether Codex's own stored login can carry a launch that defers to it.
 
     Reads the same ``auth.json`` the launched Codex process will use (the
@@ -3538,14 +3547,20 @@ def _codex_login_usable() -> bool:
     doomed (``login_required``) only when the sign-in screen is genuinely
     what the TUI will render.
 
+    :param source_home: Optional source CODEX_HOME to read auth.json from.
     :returns: ``True`` when a usable stored credential exists.
     """
     from omnigent.onboarding.ambient import codex_auth_has_credential
 
-    return codex_auth_has_credential(_codex_home_config_source_from_env() / "auth.json")
+    home = source_home if source_home is not None else _codex_home_config_source_from_env()
+    return codex_auth_has_credential(home / "auth.json")
 
 
-def _ambient_builtin_codex_provider(config_profile: str | None) -> str | None:
+def _ambient_builtin_codex_provider(
+    config_profile: str | None,
+    *,
+    source_home: Path | None = None,
+) -> str | None:
     """Built-in provider the bridged config selects without any Codex login, if any.
 
     Layers the selected profile over ``config.toml`` the way
@@ -3556,13 +3571,13 @@ def _ambient_builtin_codex_provider(config_profile: str | None) -> str | None:
         load_codex_config,
     )
 
-    source_home = _codex_home_config_source_from_env()
-    config_path = source_home / "config.toml"
+    home = source_home if source_home is not None else _codex_home_config_source_from_env()
+    config_path = home / "config.toml"
     config = load_codex_config(config_path) if config_path.exists() else {}
     if config is None:
         return None
     if config_profile is not None:
-        overlay = load_codex_config(source_home / f"{config_profile}.config.toml")
+        overlay = load_codex_config(home / f"{config_profile}.config.toml")
         if overlay is None:
             # Codex < 0.134 keeps file profiles inline; newer codex fails at start on a
             # missing file anyway, so the fallback only matters where it is correct.
@@ -3575,7 +3590,11 @@ def _ambient_builtin_codex_provider(config_profile: str | None) -> str | None:
 
 
 def _resolve_subscription_launch(
-    entry: ProviderEntry, model: str | None, explicit: dict[str, object]
+    entry: ProviderEntry,
+    model: str | None,
+    explicit: dict[str, object],
+    *,
+    source_home: Path | None = None,
 ) -> NativeCodexLaunch:
     """Resolve a native-Codex launch when the Codex default is a ``subscription``.
 
@@ -3593,6 +3612,7 @@ def _resolve_subscription_launch(
     :param explicit: The explicit parsed config mapping (``providers:`` block),
         used for the fall-through search over other configured/detected
         providers.
+    :param source_home: Optional source CODEX_HOME path to verify login state.
     :returns: The resolved :class:`NativeCodexLaunch`.
     """
     # Pin codex's built-in ``openai`` provider: the bridged config.toml may
@@ -3600,7 +3620,7 @@ def _resolve_subscription_launch(
     # Gateway), which would silently hijack a Subscription selection. A
     # no-op when the user's config sets no custom default.
     subscription_overrides = ['model_provider="openai"']
-    if _codex_login_usable():
+    if _codex_login_usable(source_home=source_home):
         log_info_once(
             _logger,
             "native-codex routing: Codex CLI login (subscription provider %r; Codex is logged in)",
@@ -3639,6 +3659,7 @@ def resolve_native_codex_launch(
     model: str | None,
     spec: AgentSpec | None = None,
     terminal_launch_args: Sequence[str] = (),
+    source_codex_home: Path | str | None = None,
 ) -> NativeCodexLaunch:
     """Resolve the native Codex launch config across all offerings.
 
@@ -3711,6 +3732,11 @@ def resolve_native_codex_launch(
     from omnigent.spec.types import DatabricksAuth
 
     explicit = load_runtime_inference_config(load_config())
+    resolved_source_home = (
+        Path(source_codex_home).expanduser().resolve()
+        if source_codex_home is not None
+        else None
+    )
     bound = resolve_bound_provider(
         explicit, "codex-native", spec.executor.auth if spec is not None else None
     )
@@ -3752,7 +3778,7 @@ def resolve_native_codex_launch(
                 # (:func:`_resolve_subscription_launch`) — never do that for
                 # an explicit spec declaration: silently running a credential
                 # the spec did not name is worse than the login screen.
-                spec_codex_logged_in = _codex_login_usable()
+                spec_codex_logged_in = _codex_login_usable(source_home=resolved_source_home)
                 if spec_codex_logged_in:
                     state = "Codex is logged in"
                 else:
@@ -3873,7 +3899,9 @@ def resolve_native_codex_launch(
         except ValueError:
             # Malformed selectors are reported where launch args are validated, at start.
             ambient_profile = None
-        ambient_builtin = _ambient_builtin_codex_provider(ambient_profile)
+        ambient_builtin = _ambient_builtin_codex_provider(
+            ambient_profile, source_home=resolved_source_home
+        )
         if ambient_builtin is not None:
             log_info_once(
                 _logger,
@@ -3906,10 +3934,12 @@ def resolve_native_codex_launch(
                 f"screen and never starts a thread; run `{cli_invocation()} setup` "
                 "to route through a provider"
             ),
-            login_required=not _codex_login_usable(),
+            login_required=not _codex_login_usable(source_home=resolved_source_home),
         )
     if entry.kind == SUBSCRIPTION_KIND:
-        return _resolve_subscription_launch(entry, model, explicit)
+        return _resolve_subscription_launch(
+            entry, model, explicit, source_home=resolved_source_home
+        )
 
     launch = _codex_provider_launch(entry, model)
     if launch is not None:
@@ -3938,7 +3968,7 @@ def resolve_native_codex_launch(
             "usable openai credential) — the TUI likely renders the sign-in screen "
             "and never starts a thread"
         ),
-        login_required=not _codex_login_usable(),
+        login_required=not _codex_login_usable(source_home=resolved_source_home),
     )
 
 

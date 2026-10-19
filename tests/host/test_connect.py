@@ -559,6 +559,61 @@ async def test_handle_model_options_serves_the_pi_harness(
     )
 
 
+async def test_handle_model_options_serves_opencode_native(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``opencode-native`` launch picker previews the ``opencode models`` catalog."""
+    from omnigent.harnesses.opencode_native import app_server as opencode_app_server
+
+    seen: dict[str, object] = {}
+
+    def fake_options(**kwargs: object) -> list[dict[str, object]]:
+        seen.update(kwargs)
+        return [
+            {
+                "id": "opencode-go/deepseek-v4-flash",
+                "model": "deepseek-v4-flash",
+                "providerID": "opencode-go",
+                "displayName": "opencode-go/deepseek-v4-flash",
+                "name": "deepseek-v4-flash",
+                "isDefault": False,
+            }
+        ]
+
+    monkeypatch.setattr(opencode_app_server, "list_opencode_cli_model_options", fake_options)
+    host = _make_host_process()
+
+    result = await host._handle_model_options(
+        HostModelOptionsFrame(request_id="req_opencode_models", harness="opencode-native"),
+    )
+
+    assert seen.get("refresh") is False
+    assert result.status == "ok"
+    assert result.models is not None and len(result.models) == 1
+    assert result.models[0]["id"] == "opencode-go/deepseek-v4-flash"
+
+
+async def test_handle_model_options_opencode_failure_is_failed_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken ``opencode models`` probe fails the lookup instead of crashing."""
+    from omnigent.harnesses.opencode_native import app_server as opencode_app_server
+
+    def boom(**kwargs: object) -> list[dict[str, object]]:
+        raise RuntimeError("no CLI")
+
+    monkeypatch.setattr(opencode_app_server, "list_opencode_cli_model_options", boom)
+    host = _make_host_process()
+
+    result = await host._handle_model_options(
+        HostModelOptionsFrame(request_id="req_opencode_broken", harness="opencode-native"),
+    )
+
+    assert result.status == "failed"
+    assert result.models == []
+    assert result.error == "failed to resolve OpenCode model options"
+
+
 @pytest.mark.parametrize("harness", ["devin-native", "native-devin", "devin"])
 async def test_handle_model_options_missing_devin_is_quiet(
     monkeypatch: pytest.MonkeyPatch,
@@ -747,6 +802,115 @@ async def test_handle_model_options_reports_the_endpoints_wider_catalog(
         "system.ai.claude-opus-4-8",
     ]
     _cleanup_host(host)
+
+
+# ---------------------------------------------------------------------------
+# Antigravity (agy) model options — live catalog via probe_agy_model_catalog
+# ---------------------------------------------------------------------------
+
+_AGY_SAMPLE_MODELS = [
+    {
+        "id": "gemini-3.8-flash-high",
+        "model": "gemini-3.8-flash-high",
+        "displayName": "Gemini 3.8 Flash (High)",
+        "isDefault": True,
+    },
+    {
+        "id": "claude-sonnet-4-6",
+        "model": "claude-sonnet-4-6",
+        "displayName": "Claude Sonnet 4.6 (Thinking)",
+    },
+]
+
+
+@pytest.mark.parametrize("harness", ["antigravity-native", "antigravity"])
+async def test_handle_model_options_antigravity_live_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+) -> None:
+    """Model options for antigravity harnesses come from probe_agy_model_catalog.
+
+    The response must reflect the live probe result exactly — no invented
+    rows, no hardcoded fallback.  Both the 'antigravity-native' and the
+    'antigravity' alias are covered.
+    """
+    from omnigent.harnesses.antigravity_native import catalog as _catalog_mod
+
+    monkeypatch.setattr(_catalog_mod, "probe_agy_model_catalog", lambda **_kw: _AGY_SAMPLE_MODELS)
+    host = _make_host_process()
+
+    result = await host._handle_model_options(
+        HostModelOptionsFrame(request_id="req_agy", harness=harness),
+    )
+
+    assert result.status == "ok"
+    assert result.request_id == "req_agy"
+    # Models arrive with a source annotation added by with_source; strip it.
+    returned_ids = [m["id"] for m in result.models]
+    assert returned_ids == ["gemini-3.8-flash-high", "claude-sonnet-4-6"]
+    assert all(m["source"]["name"] == "antigravity" for m in result.models)
+    # No invented reasoningEffortLevels keys.
+    for m in result.models:
+        assert "reasoningEffortLevels" not in m
+
+
+@pytest.mark.parametrize("harness", ["antigravity-native", "antigravity"])
+async def test_handle_model_options_antigravity_probe_failure_returns_failed(
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+) -> None:
+    """When probe_agy_model_catalog returns None, the result is status='failed'.
+
+    The old hardcoded fallback must NOT be present.  A failed probe means
+    honest failure, not an invented list.
+    """
+    from omnigent.harnesses.antigravity_native import catalog as _catalog_mod
+
+    monkeypatch.setattr(_catalog_mod, "probe_agy_model_catalog", lambda **_kw: None)
+    host = _make_host_process()
+
+    result = await host._handle_model_options(
+        HostModelOptionsFrame(request_id="req_fail", harness=harness),
+    )
+
+    assert result.status == "failed"
+    assert result.models == []
+    assert result.error is not None
+    # Must not contain any hardcoded slug.
+    assert "gemini-3.8-flash" not in (result.error or "")
+
+
+@pytest.mark.parametrize("harness", ["antigravity-native", "antigravity"])
+async def test_handle_model_options_antigravity_no_hardcoded_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+) -> None:
+    """The response must never contain the old hardcoded slugs.
+
+    Verifies that the connect.py replacement is complete: any model whose
+    slug ends with no effort suffix (e.g. 'gemini-3.8-flash' without
+    '-high'/'-medium'/'-low') is a sign that a hardcoded entry leaked.
+    """
+    from omnigent.harnesses.antigravity_native import catalog as _catalog_mod
+
+    monkeypatch.setattr(_catalog_mod, "probe_agy_model_catalog", lambda **_kw: _AGY_SAMPLE_MODELS)
+    host = _make_host_process()
+
+    result = await host._handle_model_options(
+        HostModelOptionsFrame(request_id="req_no_hard", harness=harness),
+    )
+
+    hardcoded_ids = {
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.1-pro",
+        "claude-opus-4-6-thinking",
+        "gpt-oss-120b-medium",
+    }
+    returned_ids = {m["id"] for m in result.models}
+    overlap = hardcoded_ids & returned_ids
+    assert not overlap, f"Hardcoded slugs leaked into response: {overlap}"
 
 
 def _make_host_process() -> HostProcess:
@@ -6262,6 +6426,11 @@ async def test_handle_model_options_serves_codex_probe_rows_and_caches(
     """
     from omnigent.harnesses.codex_native import app_server as codex_native_app_server
 
+    # This test isolates catalog caching from ambient provider decoration.
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness", lambda _: None
+    )
+
     monkeypatch.setattr(
         codex_native_app_server,
         "resolve_native_codex_launch",
@@ -6396,6 +6565,11 @@ async def test_model_options_frame_replies_off_the_receive_loop(
     reply frame arrives from the dispatched task once the probe finishes.
     """
     from omnigent.harnesses.codex_native import app_server as codex_native_app_server
+
+    # Tunnel scheduling does not depend on the developer's provider configuration.
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness", lambda _: None
+    )
     from omnigent.host.frames import encode_host_frame
 
     monkeypatch.setattr(

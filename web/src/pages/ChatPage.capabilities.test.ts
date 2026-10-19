@@ -161,11 +161,12 @@ describe("shouldShowEffortPicker", () => {
     );
   });
 
-  it("hides effort controls for opencode-native (model indicator only)", () => {
-    // WHY: opencode surfaces its live model read-only (switching stays in the
-    // opencode TUI); there is no Web UI effort dial for it.
+  it("shows effort controls for opencode-native (effort selects a model tier)", () => {
+    // WHY: opencode has no native effort axis; the dial selects a model tier
+    // server-side (low/medium/high → longcat/deepseek/muse), applied as the
+    // session model override — same pattern as devin's variant suffix.
     expect(shouldShowEffortPicker({ labels: { "omnigent.wrapper": "opencode-native-ui" } })).toBe(
-      false,
+      true,
     );
   });
 

@@ -137,6 +137,7 @@ from omnigent.server.routes._sessions.helpers import (
     _parse_session_create_metadata,
     _permission_level_from_grants,
     _pin_claude_permission_launch_args,
+    _env_labels_for_agent_spec,
     _presentation_labels_for_agent,
     _prune_session_read_state,
     _publish_codex_approval_mode,
@@ -3254,6 +3255,8 @@ def register_core_routes(
         # in generic native-wrapper UI state. Drop it whenever the agent changes.
         if switching_agent:
             dropped_label_keys_set.add(_CLAUDE_NATIVE_PERMISSION_MODE_LABEL_KEY)
+            dropped_label_keys_set.add("omnigent.codex.codex_home")
+            dropped_label_keys_set.add("omnigent.antigravity.gemini_dir")
         dropped_label_keys: frozenset[str] = frozenset(dropped_label_keys_set)
 
         # DANGEROUS codex full-bypass. The source's bypass label is always
@@ -3264,6 +3267,9 @@ def register_core_routes(
         # so refuse to stamp it on a non-Codex fork). Stamped via extra_labels,
         # which the store applies AFTER the drop so the opt-in wins.
         extra_labels: dict[str, str] = {}
+        target_env_labels = await asyncio.to_thread(_env_labels_for_agent_spec, base_agent)
+        if target_env_labels:
+            extra_labels.update(target_env_labels)
         if body.codex_bypass_sandbox:
             target_native = await asyncio.to_thread(_native_coding_agent_for_agent, base_agent)
             if target_native is None or target_native.harness != "codex-native":
