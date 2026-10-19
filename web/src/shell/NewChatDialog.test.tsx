@@ -8961,9 +8961,9 @@ describe("NewChatLandingScreen agent picker + Edit settings", () => {
 
   it("hides Edit for a harness with no configurable settings", () => {
     mockAgents([
-      testAgent("a_bare", "opencode-native-ui", {
-        display_name: "OpenCode",
-        harness: "opencode-native",
+      testAgent("a_bare", "kiro-native-ui", {
+        display_name: "Kiro",
+        harness: "kiro-native",
       }),
     ]);
     renderLanding({ smart_routing_enabled: true });

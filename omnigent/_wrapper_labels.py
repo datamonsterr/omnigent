@@ -76,6 +76,9 @@ ANTIGRAVITY_NATIVE_WRAPPER_VALUE = "antigravity-native-ui"
 # Value stamped on mirrored Antigravity child sessions.
 ANTIGRAVITY_NATIVE_SUBAGENT_WRAPPER_VALUE = "antigravity-native-ui-subagent"
 
+# Value stamped on mirrored OpenCode child sessions.
+OPENCODE_NATIVE_SUBAGENT_WRAPPER_VALUE = "opencode-native-ui-subagent"
+
 # Value the ``omnigent qwen`` wrapper writes into
 # ``conversations.labels[WRAPPER_LABEL_KEY]``.
 QWEN_NATIVE_WRAPPER_VALUE = "qwen-native-ui"

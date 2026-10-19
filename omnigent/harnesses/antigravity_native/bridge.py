@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,10 @@ _STATE_FILE = "state.json"
 # the agy terminal launches; read by the executor's first-turn bootstrap.
 _TMUX_FILE = "tmux.json"
 _BRIDGE_ROOT = Path.home() / ".omnigent" / "antigravity-native"
+# Dead-owner bridges with agy conversation history are retained for 7 days.
+# Bridges without any agy-home conversation data (genuinely disposable) are
+# always eligible for immediate reclaim regardless of age.
+_ORPHAN_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 # Prefix of the launcher-minted placeholder conversation id (see
 # ``antigravity_native._mint_agy_conversation_id``). agy mints its own real
@@ -269,9 +274,49 @@ def prune_orphaned_bridge_dirs() -> int:
     at startup to reclaim dirs leaked by a prior runner that died without
     running the explicit delete path.
 
+    A bridge is only eligible when :func:`_agy_orphan_retention_expired` clears
+    it: bridges that contain agy conversation history (any ``.db`` or
+    ``.db-wal`` file under ``agy-home/``) are retained so the user can resume
+    them. Bridges without an ``agy-home/`` directory are genuinely disposable
+    and are always eligible.
+
     :returns: The number of orphaned bridge dirs removed.
     """
-    return native_bridge_common.prune_orphaned_dirs(bridge_root())
+    return native_bridge_common.prune_orphaned_dirs(
+        bridge_root(),
+        should_prune=_agy_orphan_retention_expired,
+    )
+
+
+def _agy_orphan_retention_expired(bridge_dir: Path) -> bool:
+    """Retain native history; prune only demonstrably disposable bridge state."""
+    agy_home = agy_home_dir(bridge_dir)
+    try:
+        mode = agy_home.lstat().st_mode
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if not stat.S_ISDIR(mode):
+        # A linked or unexpected home may contain history on an unavailable mount.
+        return False
+
+    def unreadable(error: OSError) -> None:
+        raise error
+
+    try:
+        for _dirpath, _subdirs, filenames in os.walk(agy_home, onerror=unreadable):
+            for filename in filenames:
+                if filename.endswith((".db", ".db-wal", ".pb")):
+                    return False
+    except OSError:
+        # Cannot determine whether history exists — fail closed, keep the bridge.
+        _logger.debug(
+            "Cannot scan agy-home for conversation history in %s; retaining bridge",
+            bridge_dir,
+        )
+        return False
+    return True
 
 
 # ── Omnigent MCP relay wiring (sys_* tools) ──────────────────────────────────

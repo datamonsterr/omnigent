@@ -46,6 +46,12 @@ describe("effortLevelsForConv", () => {
     expect(effortLevelsForConv(conv)).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 
+  it("returns the opencode model-tier rungs for opencode-native conversations", () => {
+    // No native effort axis: low/medium/high select a model tier server-side.
+    const conv = { labels: { "omnigent.wrapper": "opencode-native-ui" } };
+    expect(effortLevelsForConv(conv)).toEqual(["low", "medium", "high"]);
+  });
+
   it("returns the default 3-level set for non-claude-native conversations", () => {
     // Non-native harnesses (claude-sdk, codex, openai-agents, ...) keep the
     // existing low/medium/high options — we only changed CN, not the

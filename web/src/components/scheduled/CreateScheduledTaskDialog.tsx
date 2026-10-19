@@ -31,7 +31,7 @@ import { useHosts } from "@/hooks/useHosts";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { sandboxOptionLabel } from "@/lib/capabilities";
 import { useCreateScheduledTask, useUpdateScheduledTask } from "@/hooks/useScheduledTasks";
-import { isNativeCodingAgent, nativeAgentHasCapability } from "@/lib/nativeCodingAgents";
+import { isNativeCodingAgent, nativeAgentHasCapability, nativeCodingAgentForAvailableAgent } from "@/lib/nativeCodingAgents";
 import { isAcpHarnessAgent, selectableSessionAgents } from "@/lib/agentGrouping";
 import {
   isBackdropOverlay,
@@ -150,15 +150,17 @@ export function CreateScheduledTaskDialog({
     setPickedPermission(backToOriginal ? (editingTask?.permissionMode ?? "") : "");
   }
 
-  // Model + effort are surfaced only for native coding agents that carry the
-  // model/effort surface — the same `permissionMode` capability the interactive
-  // dialog gates its Model/Effort/Permissions block on (Claude Code). Agents
-  // without it (plain SDK agents like Polly, or native harnesses with no
-  // model-picker surface) show no model/effort controls, exactly like
-  // interactive. Resolved from the full agent list so a task bound to an agent
-  // the picker hides still gates on its real capabilities.
+  // Model + effort are surfaced for Claude Code (permissionMode capability)
+  // and OpenCode (modelPicker capability with tiered effort). Permission mode
+  // stays Claude-only; OpenCode gets Model + Effort only. Resolved from the
+  // full agent list so a task bound to an agent the picker hides still gates
+  // on its real capabilities.
   const modelEffortAgent = agents?.find((a) => a.id === effectiveAgentId);
-  const showModelEffort = nativeAgentHasCapability(modelEffortAgent, "permissionMode");
+  const modelEffortHarness =
+    nativeCodingAgentForAvailableAgent(modelEffortAgent)?.harness ?? null;
+  const showPermissionMode = nativeAgentHasCapability(modelEffortAgent, "permissionMode");
+  const showModelEffort =
+    showPermissionMode || modelEffortHarness === "opencode-native";
 
   // ── Nested dropdown dismiss guard ─────────────────────────────────────────
   // The agent picker and host/schedule Selects portal dropdowns OUTSIDE DialogContent.
@@ -336,11 +338,14 @@ export function CreateScheduledTaskDialog({
         // "" (Default) maps to `null` so an update CLEARS a previously-set
         // override; a non-default pick sends the value. When the agent has no
         // model/effort surface we send neither key (left untouched server-side).
+        // Permission mode is Claude-only; OpenCode never sends it.
         const overrides = showModelEffort
           ? {
               modelOverride: pickedModel === "" ? null : pickedModel,
               reasoningEffort: pickedEffort === "" ? null : pickedEffort,
-              permissionMode: pickedPermission === "" ? null : pickedPermission,
+              ...(showPermissionMode
+                ? { permissionMode: pickedPermission === "" ? null : pickedPermission }
+                : {}),
             }
           : {};
         await updateMutation.mutateAsync({
@@ -363,7 +368,7 @@ export function CreateScheduledTaskDialog({
           // the create uses the agent's configured defaults.
           ...(showModelEffort && pickedModel !== "" ? { modelOverride: pickedModel } : {}),
           ...(showModelEffort && pickedEffort !== "" ? { reasoningEffort: pickedEffort } : {}),
-          ...(showModelEffort && pickedPermission !== ""
+          ...(showPermissionMode && pickedPermission !== ""
             ? { permissionMode: pickedPermission }
             : {}),
         });
@@ -491,8 +496,7 @@ export function CreateScheduledTaskDialog({
             )}
           </div>
 
-          {/* Model + reasoning effort + permission mode — only for native
-              coding agents that carry the model/effort surface (Claude Code).
+          {/* Model + reasoning effort (+ permission mode for Claude Code).
               Unselected controls fall back to the agent's configured defaults. */}
           {showModelEffort && (
             <div data-testid="task-model-effort-field">
@@ -501,15 +505,18 @@ export function CreateScheduledTaskDialog({
                 effort={pickedEffort}
                 permissionMode={pickedPermission}
                 hostId={hostId}
+                harness={modelEffortHarness}
+                showPermissionMode={showPermissionMode}
                 onModelChange={setPickedModel}
                 onEffortChange={setPickedEffort}
                 onPermissionModeChange={setPickedPermission}
                 onSelectOpenChange={handleSelectOpenChange}
               />
               <p className="mt-1.5 text-sm text-muted-foreground">
-                Leave on Default to use the agent&apos;s configured model, effort, and permission
-                mode. Automations run unattended, so a prompting mode (Manual or Plan) will wait for
-                approval that never comes.
+                Leave on Default to use the agent&apos;s configured model
+                {showPermissionMode ? ", effort, and permission mode" : " and effort"}. Automations
+                run unattended, so a prompting mode (Manual or Plan) will wait for approval that
+                never comes.
               </p>
             </div>
           )}

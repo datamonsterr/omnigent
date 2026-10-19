@@ -1209,7 +1209,15 @@ def _populate_codex_home_config(
         source_file = source_dir / filename
         if not source_file.is_file():
             continue
-        if link_path.exists() or link_path.is_symlink():
+        if link_path.is_symlink():
+            try:
+                if link_path.resolve() != source_file.resolve():
+                    link_path.unlink()
+                else:
+                    continue
+            except OSError:
+                link_path.unlink(missing_ok=True)
+        elif link_path.exists():
             continue
         try:
             if filename in _CODEX_HOME_HARDLINK_FILES:
@@ -1233,7 +1241,15 @@ def _populate_codex_home_config(
             if not source_subdir.is_dir():
                 continue
             link_path = target_dir / reldir
-            if link_path.exists() or link_path.is_symlink():
+            if link_path.is_symlink():
+                try:
+                    if link_path.resolve() != source_subdir.resolve():
+                        link_path.unlink()
+                    else:
+                        continue
+                except OSError:
+                    link_path.unlink(missing_ok=True)
+            elif link_path.exists():
                 continue
             link_path.parent.mkdir(parents=True, exist_ok=True)
             try:

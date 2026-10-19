@@ -250,8 +250,11 @@ def test_efforts_for_harness_distinguishes_unsupported_from_unknown() -> None:
     # at ultra to Codex's default before its first turn.
     assert efforts_for_harness("codex-native") == CODEX_NATIVE_EFFORTS
     assert efforts_for_harness("codex") == CODEX_EFFORTS
-    # Known, but declared EffortFamily.NONE.
-    assert efforts_for_harness("opencode-native") == frozenset()
+    # OpenCode has no native effort axis: the dial selects a model tier, so
+    # the family carries the low/medium/high vocabulary.
+    from omnigent.util.reasoning_effort import OPENCODE_EFFORTS
+
+    assert efforts_for_harness("opencode-native") == OPENCODE_EFFORTS
     # Not in the registry at all — unclassifiable, not unsupported.
     assert efforts_for_harness("some-plugin-harness") is None
     assert efforts_for_harness(None) is None
@@ -264,3 +267,35 @@ def test_efforts_for_harness_resolves_aliases() -> None:
 
     canonical = canonicalize_harness("claude-code") or "claude-code"
     assert efforts_for_harness("claude-code") == efforts_for_harness(canonical)
+
+
+def test_opencode_tier_stays_inside_model_family() -> None:
+    """The effort dial moves within the session's brand, never across it."""
+    from omnigent.util.reasoning_effort import opencode_effort_tier_model
+
+    assert opencode_effort_tier_model("opencode-go/kimi-k3", "low") == "opencode-go/kimi-k2.7-code"
+    assert (
+        opencode_effort_tier_model("opencode-go/kimi-k2.7-code", "high") == "opencode-go/kimi-k3"
+    )
+    assert (
+        opencode_effort_tier_model("opencode-go/deepseek-v4-flash", "high")
+        == "opencode-go/deepseek-v4-pro"
+    )
+    assert (
+        opencode_effort_tier_model("opencode-go/qwen3.8-flash", "high")
+        == "opencode-go/qwen3.8-max"
+    )
+
+
+def test_opencode_tier_falls_back_to_default_without_family() -> None:
+    """No pinned model (or an unknown brand) uses the operator default tier."""
+    from omnigent.util.reasoning_effort import opencode_effort_tier_model
+
+    assert opencode_effort_tier_model(None, "medium") == "opencode-go/deepseek-v4-flash"
+    assert (
+        opencode_effort_tier_model("opencode-go/space-bunny", "high") == "opencode-go/space-bunny"
+    )
+    assert (
+        opencode_effort_tier_model("other-provider/some-model", "low")
+        == "opencode-go/longcat-2.5-preview-free"
+    )

@@ -60,15 +60,19 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 
 import httpx
 
 from omnigent.entities.session_resources import terminal_resource_id
+from omnigent.harnesses.antigravity_native import rpc
 from omnigent.harnesses.antigravity_native.bridge import (
     ANTIGRAVITY_NATIVE_BRIDGE_ID_LABEL_KEY,
     AntigravityNativeBridgeState,
+    agy_gemini_dir,
     is_placeholder_conversation_id,
     read_bridge_state,
+    read_tmux_info,
     write_bridge_state,
 )
 from omnigent.harnesses.antigravity_native.rpc import (
@@ -106,6 +110,10 @@ _logger = logging.getLogger(__name__)
 # and steps finalize only at DONE (no token streaming), so a sub-second cadence
 # keeps the mirror responsive without hammering the loopback server.
 _DEFAULT_POLL_INTERVAL_S = 0.25
+
+_MISSING_RESUME_GRACE_S = 30.0
+_MISSING_RESUME_CONFIRMATIONS = 3
+_MISSING_RESUME_BACKOFF_S = 2.0
 
 # Sub-agent mirrors poll their own cascade. Slower than the parent's tick because
 # a session can run twenty-odd of them at once (live-verified: 23), and none of
@@ -793,11 +801,67 @@ def _resolve_rpc_port(cascade_id: str) -> int | None:
     return None
 
 
+class MissingNativeHistoryError(RuntimeError):
+    """The saved resume ID is absent from this pane's native history."""
+
+
+def _missing_resume_port(bridge_dir: Path, cascade_id: str) -> int | None:
+    """Confirm missing history only through the isolated store and this pane's RPC."""
+    if Path(cascade_id).name != cascade_id or cascade_id in {".", ".."}:
+        return None
+    store = agy_gemini_dir(bridge_dir) / "antigravity-cli/conversations"
+    try:
+        if not store.is_dir():
+            return None
+    except OSError:
+        return None
+    for suffix in (".db", ".db-wal", ".pb"):
+        try:
+            (store / f"{cascade_id}{suffix}").lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        return None
+    tmux = read_tmux_info(bridge_dir)
+    if tmux is None:
+        return None
+    resolution = rpc.resolve_pane_agy_rpc_port_state(
+        Path(tmux["socket_path"]), tmux["tmux_target"]
+    )
+    if not resolution.agy_found or resolution.port is None:
+        return None
+    port = resolution.port
+    try:
+        with rpc._sync_client(rpc._PROBE_TIMEOUT_S) as client:
+            response = client.post(
+                rpc._rpc_url(port, rpc._METHOD_GET_CONVERSATION_METADATA),
+                headers=rpc._rpc_headers(port),
+                json={"conversationId": cascade_id},
+            )
+        body = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    message = body.get("message") if isinstance(body, dict) else None
+    missing_message = message in (
+        "trajectory not found",
+        f"trajectory not found: {cascade_id}",
+    ) or (
+        isinstance(message, str)
+        and message.startswith(f"trajectory not found: {cascade_id} (error ID:")
+    )
+    if response.status_code == 500 and missing_message:
+        return port
+    return None
+
+
 async def _discover(
     bridge_dir: Path,
     *,
     poll_interval_s: float,
     stop: StopPredicate,
+    client: httpx.AsyncClient | None = None,
+    session_id: str | None = None,
 ) -> tuple[str, int] | None:
     """
     Resolve ``(cascade_id, port)``, polling until ready or asked to stop.
@@ -819,6 +883,9 @@ async def _discover(
     :returns: ``(cascade_id, port)`` once both resolve, or ``None`` if ``stop``
         fired before discovery completed.
     """
+    started_at = monotonic()
+    missing_key: tuple[str, int] | None = None
+    missing_confirmations = 0
     while True:
         cascade_id = await asyncio.to_thread(_resolve_cascade_id, bridge_dir)
         if cascade_id is not None:
@@ -831,9 +898,42 @@ async def _discover(
                     port,
                 )
                 return cascade_id, port
+        confirmed_port: int | None = None
+        diagnosing_resume = False
+        if cascade_id is not None and client is not None:
+            diagnosing_resume = True
+            state = await asyncio.to_thread(read_bridge_state, bridge_dir)
+            if state is not None and (session_id is None or state.session_id == session_id):
+                try:
+                    response = await client.get(f"/v1/sessions/{url_component(state.session_id)}")
+                    response.raise_for_status()
+                    body = response.json()
+                except (httpx.HTTPError, ValueError):
+                    body = None
+                if isinstance(body, dict) and body.get("external_session_id") == cascade_id:
+                    confirmed_port = await asyncio.to_thread(
+                        _missing_resume_port, bridge_dir, cascade_id
+                    )
+        if confirmed_port is not None and cascade_id is not None:
+            key = (cascade_id, confirmed_port)
+            missing_confirmations = missing_confirmations + 1 if key == missing_key else 1
+            missing_key = key
+            if (
+                monotonic() - started_at >= _MISSING_RESUME_GRACE_S
+                and missing_confirmations >= _MISSING_RESUME_CONFIRMATIONS
+            ):
+                raise MissingNativeHistoryError(
+                    f"Cannot resume Antigravity conversation {cascade_id}: "
+                    "its saved native history is missing. Restore the native history "
+                    "from a backup, or start a new session. "
+                    "Your Omnigent chat history is retained."
+                )
+        else:
+            missing_key = None
+            missing_confirmations = 0
         if stop():
             return None
-        await _sleep(poll_interval_s)
+        await _sleep(_MISSING_RESUME_BACKOFF_S if diagnosing_resume else poll_interval_s)
 
 
 async def _watch_for_rotation(
@@ -1020,7 +1120,42 @@ async def supervise_reader(
     """
     should_stop: StopPredicate = stop if stop is not None else (lambda: False)
 
-    discovered = await _discover(bridge_dir, poll_interval_s=poll_interval_s, stop=should_stop)
+    try:
+        discovered = await _discover(
+            bridge_dir,
+            poll_interval_s=poll_interval_s,
+            stop=should_stop,
+            client=client,
+            session_id=session_id,
+        )
+    except MissingNativeHistoryError as exc:
+        message = str(exc)
+        await _post_event(
+            client,
+            session_id,
+            OutboundEvent(
+                event_type="external_conversation_item",
+                data={
+                    "item_type": "message",
+                    "item_data": {
+                        "role": "assistant",
+                        "agent": "Antigravity",
+                        "content": [{"type": "output_text", "text": message}],
+                    },
+                },
+                step_index=0,
+            ),
+        )
+        await _post_event(
+            client,
+            session_id,
+            OutboundEvent(
+                event_type="external_session_status",
+                data={"status": _STATUS_FAILED, "output": message, "turn_outcome": "failed"},
+                step_index=0,
+            ),
+        )
+        return None
     if discovered is None:
         return None
     cascade_id, port = discovered

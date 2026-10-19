@@ -1149,3 +1149,125 @@ async def test_question_asked_dedupes_concurrent_same_request() -> None:
     assert fwd._question_tasks["que_1"] is task
     await task
     assert opencode.question_replies == [("que_1", [["A"]])]
+
+
+# --- sub-agent mirroring ---------------------------------------------------
+
+
+class _SubagentServer(_RecordingServerClient):
+    """Server stub that mints a child id for every opencode sub-agent start."""
+
+    async def post(self, url: str, *, json: dict[str, Any]) -> httpx.Response:
+        self.posts.append((url, json))
+        request = httpx.Request("POST", url)
+        if json.get("type") == "external_opencode_subagent_start":
+            return httpx.Response(200, json={"child_session_id": "conv_child"}, request=request)
+        return httpx.Response(200, request=request)
+
+
+class _SubagentOpenCode(_FakeOpenCodeClient):
+    """OpenCode stub whose only known child is ``ses_child`` under the root."""
+
+    async def get_session(self, session_id: str):
+        from omnigent.harnesses.opencode_native.client import OpenCodeSession
+
+        if session_id == "ses_child":
+            return OpenCodeSession(id="ses_child", title="build", parent_id=_SESSION)
+        return None
+
+
+async def test_child_session_part_registers_and_mirrors_subagent() -> None:
+    """A child-session part registers the sub-agent and mirrors it into the child conv.
+
+    opencode streams sub-agent work as parts carrying the CHILD session id on
+    the same /event bus the forwarder consumes. The first such part must mint a
+    ``external_opencode_subagent_start`` child row under the parent, and the
+    child's text/status must land in that child conversation — not the root.
+    """
+    server, opencode = _SubagentServer(), _SubagentOpenCode()
+    fwd = _forwarder(server, opencode)
+
+    await fwd.handle_event(
+        _event(
+            "message.part.updated",
+            sessionID="ses_child",
+            part={
+                "id": "prt_1",
+                "type": "text",
+                "text": "First draft",
+                "sessionID": "ses_child",
+                "messageID": "msg_child",
+            },
+        )
+    )
+    starts = [
+        json
+        for url, json in server.posts
+        if json.get("type") == "external_opencode_subagent_start"
+    ]
+    assert len(starts) == 1
+    assert starts[0]["data"]["session_id"] == "ses_child"
+    assert starts[0]["data"]["agent"] == "build"
+    root_urls = [url for url, _ in server.posts if url == "/v1/sessions/conv_1/events"]
+    assert root_urls, "child registration must POST to the PARENT conversation"
+    assert fwd._subagent_children["ses_child"] == "conv_child"
+
+    server.posts.clear()
+    await fwd.handle_event(
+        _event(
+            "message.part.updated",
+            sessionID="ses_child",
+            part={
+                "id": "prt_2",
+                "type": "text",
+                "text": "Final text",
+                "sessionID": "ses_child",
+                "messageID": "msg_child",
+            },
+        )
+    )
+    # Text is finalized only on the child's session.idle — nothing posted yet.
+    assert server.posts == []
+
+    await fwd.handle_event(_event("session.idle", sessionID="ses_child"))
+    child_urls = [
+        (url, json) for url, json in server.posts if url == "/v1/sessions/conv_child/events"
+    ]
+    assert child_urls, "no events targeted at the child conversation"
+    types = [json["type"] for _url, json in child_urls]
+    assert "external_conversation_item" in types
+    assert "external_session_status" in types
+    assert [
+        json["data"]["item_data"]["content"][0]["text"]
+        for _url, json in child_urls
+        if json.get("type") == "external_conversation_item"
+        and json["data"].get("item_type") == "message"
+    ] == ["First draft", "Final text"]
+    statuses = [json for _url, json in child_urls if json.get("type") == "external_session_status"]
+    assert statuses[-1]["data"]["status"] == "idle"
+
+
+async def test_foreign_session_event_never_mirrored() -> None:
+    """Events for sessions that do not chain to this root are dropped.
+
+    The forwarder probes each unknown non-root session id once; a session with
+    no resolvable parent (or a parent outside this root) is cached as foreign
+    and never produces events.
+    """
+    server, opencode = _RecordingServerClient(), _FakeOpenCodeClient()
+    fwd = _forwarder(server, opencode)
+
+    await fwd.handle_event(_event("session.idle", sessionID="ses_foreign"))
+    assert server.posts == []
+    assert "ses_foreign" in fwd._subagent_checked
+    assert "ses_foreign" not in fwd._subagent_children
+
+    # Second sighting: already checked, no probe, no posts.
+    await fwd.handle_event(
+        _event(
+            "message.part.updated",
+            sessionID="ses_foreign",
+            part={"id": "prt_x", "type": "text", "text": "nope", "sessionID": "ses_foreign"},
+        )
+    )
+    assert server.posts == []

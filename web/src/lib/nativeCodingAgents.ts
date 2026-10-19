@@ -142,7 +142,8 @@ export const NATIVE_CODING_AGENTS = [
     displayName: "OpenCode",
     iconKind: "opencode",
     sortRank: 25,
-    // No capabilities → no permission picker. OpenCode has no claude-style
+    capabilities: ["modelPicker"],
+    // No permission picker. OpenCode has no claude-style
     // permission-mode surface to mirror: its native modes are the `build`
     // (allow-by-default) and `plan` primary agents, switched at runtime via Tab
     // inside the TUI — and `opencode attach` (how the runner launches it) has

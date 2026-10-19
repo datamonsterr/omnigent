@@ -546,6 +546,65 @@ def _strip_trailing_commas(text: str) -> str:
     return "".join(result)
 
 
+def _user_opencode_config_files() -> tuple[Path, ...]:
+    """Return the user's real global OpenCode config files, in load order.
+
+    OpenCode loads both ``opencode.json`` and ``opencode.jsonc`` from the same
+    directory, merging them with the later file (``.jsonc``) winning on key
+    collisions. The runner's own env carries the user's real
+    ``XDG_CONFIG_HOME`` (the per-session override is set only on the spawned
+    server), so this scans that directory for both files.
+
+    :returns: The existing config files, ``opencode.json`` first.
+    """
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    cfg_dir = base / "opencode"
+    return tuple(
+        path
+        for path in (cfg_dir / "opencode.json", cfg_dir / "opencode.jsonc")
+        if path.is_file()
+    )
+
+
+def _load_user_opencode_config() -> dict[str, object] | None:
+    """Read and merge the user's global OpenCode config files.
+
+    Merges ``opencode.json`` and ``opencode.jsonc`` into one dict (the later
+    file wins on collisions, mirroring OpenCode's own load order), parsing
+    JSONC comments and trailing commas. Returns ``None`` when no file exists
+    or none parse to an object.
+
+    :returns: The merged user config, or ``None``.
+    """
+    merged: dict[str, object] = {}
+    for path in _user_opencode_config_files():
+        try:
+            raw = path.read_text(encoding="utf-8")
+            # Try plain JSON first (handles .json files without comments).
+            # If that fails, strip JSONC comments and trailing commas, then
+            # retry (handles .jsonc).
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                cleaned = _strip_jsonc_comments(raw)
+                cleaned = _strip_trailing_commas(cleaned)
+                parsed = json.loads(cleaned)
+        except (OSError, UnicodeDecodeError):
+            continue
+        except json.JSONDecodeError:
+            _logger.warning(
+                "Failed to parse user OpenCode config at %s — ignoring it",
+                path,
+            )
+            continue
+        if isinstance(parsed, dict):
+            merged.update(parsed)
+        else:
+            _logger.warning("User OpenCode config at %s is not a JSON object", path)
+    return dict(merged) if merged else None
+
+
 def maybe_merge_user_provider_config(config: dict[str, object]) -> dict[str, object]:
     """
     Merge the user's global OpenCode provider definitions into *config*.
@@ -554,54 +613,38 @@ def maybe_merge_user_provider_config(config: dict[str, object]) -> dict[str, obj
     provider definitions (e.g. OpenAI-compatible endpoints with custom base
     URLs). When running under Omnigent, the per-session ``XDG_CONFIG_HOME``
     override hides this global config. This function reads the user's real
-    config and merges any ``provider`` block into *config* so the spawned
-    server sees both the user's providers (with their custom base URLs) and
-    any Omnigent-synthesized providers (e.g. Databricks gateway).
+    config and merges it into *config* so the spawned server sees both the
+    user's providers (with their custom base URLs) and any Omnigent-synthesized
+    providers (e.g. Databricks gateway).
 
-    ``provider`` entries are merged, and the user's top-level ``plugin``
-    entries are appended after any synthesized ones (synthesized policy
-    plugins stay first; duplicate paths are dropped) so plugin-based
-    provider auth keeps working in native sessions. The user config's
-    ``model`` default is adopted **only when the synthesized config pins
-    none** — for the other keys it sets (model, mcp, permission, etc.) the
-    synthesized config still takes precedence. The ``model`` carry-over
-    matters because when
-    neither a gateway nor a spec-supplied ``model_override`` is present, the
-    synthesized config has no ``model`` key, and opencode-native would otherwise
-    pick its own default over the merged models map (e.g. landing on a served
-    Gemini endpoint even though the user's config defaults to Claude).
+    Merged from the user config:
+
+    - ``provider``: entries are merged alongside synthesized ones (synthesized
+      keys win, so the gateway/relay never gets clobbered).
+    - ``plugin``: user entries append after any synthesized ones (synthesized
+      policy plugins stay first; duplicate paths are dropped) so plugin-based
+      provider auth keeps working in native sessions.
+    - ``mcp``: user servers are merged alongside synthesized ones (synthesized
+      keys win, so the Omnigent builtin-tool relay can't be masked). Without
+      this, omnigent sessions silently lose the user's global MCP servers
+      (context7, headroom, jev_router, …) that codex keeps via
+      ``~/.codex/config.toml``.
+    - ``permission``: an explicit user permission (e.g. ``"allow"`` for
+      autonomous worker sessions) overrides the synthesized default; absent a
+      user value the synthesized config wins untouched.
+    - ``model``: adopted **only when the synthesized config pins none** — for
+      the other keys it sets the synthesized config still takes precedence.
+      This matters because when neither a gateway nor a spec-supplied
+      ``model_override`` is present, the synthesized config has no ``model``
+      key, and opencode-native would otherwise pick its own default over the
+      merged models map (e.g. landing on a served Gemini endpoint even though
+      the user's config defaults to Claude).
 
     :param config: The synthesized config dict (may be empty).
-    :returns: *config* with user's ``provider`` entries (and, if unset, the
-        user's default ``model``) merged in.
+    :returns: *config* with the user's global settings merged in.
     """
-    from omnigent.harnesses.opencode_native.bridge import user_opencode_config_path
-
-    user_path = user_opencode_config_path()
-    if user_path is None:
-        return config
-
-    try:
-        raw = user_path.read_text(encoding="utf-8")
-        # Try plain JSON first (handles .json files without comments).
-        # If that fails, strip JSONC comments and trailing commas, then
-        # retry (handles .jsonc).
-        try:
-            user_config = json.loads(raw)
-        except json.JSONDecodeError:
-            cleaned = _strip_jsonc_comments(raw)
-            cleaned = _strip_trailing_commas(cleaned)
-            user_config = json.loads(cleaned)
-    except (OSError, UnicodeDecodeError):
-        return config
-    except json.JSONDecodeError:
-        _logger.warning(
-            "Failed to parse user OpenCode config at %s — ignoring user providers",
-            user_path,
-        )
-        return config
-
-    if not isinstance(user_config, dict):
+    user_config = _load_user_opencode_config()
+    if user_config is None:
         return config
 
     # Adopt the user's default ``model`` when the synthesized config pins none.
@@ -631,13 +674,42 @@ def maybe_merge_user_provider_config(config: dict[str, object]) -> dict[str, obj
         if merged:
             target["plugin"] = merged
 
+    def _merge_mcp(target: dict[str, object]) -> None:
+        """Preserve the user's global MCP servers while retaining synthesized ones."""
+        user_mcp = user_config.get("mcp")
+        if not isinstance(user_mcp, dict) or not user_mcp:
+            return
+        existing = target.get("mcp")
+        merged: dict[str, object] = dict(existing) if isinstance(existing, dict) else {}
+        for key, value in user_mcp.items():
+            if key not in merged:
+                merged[key] = value
+        if merged:
+            target["mcp"] = merged
+
+    def _carry_permission(target: dict[str, object]) -> None:
+        """Honor an explicit user global permission decision.
+
+        The synthesized default (``"ask"``) routes tool calls through
+        Omnigent's policy engine via the forwarder's permission gate; an
+        explicit user value (e.g. ``"allow"`` for autonomous worker sessions)
+        overrides it so a spawned opencode matches the user's standalone setup.
+        Absent a user value the synthesized default is untouched.
+        """
+        user_permission = user_config.get("permission")
+        if user_permission is not None:
+            target["permission"] = user_permission
+
     user_providers = user_config.get("provider")
     if not isinstance(user_providers, dict) or not user_providers:
-        # No custom providers to merge, but the user's default model still
-        # applies when the synthesized config didn't pin one.
+        # No custom providers to merge, but the user's global model / MCP /
+        # permission / plugins still apply when the synthesized config doesn't
+        # pin them.
         result = dict(config)
         _carry_model(result)
         _merge_plugins(result)
+        _merge_mcp(result)
+        _carry_permission(result)
         return result
 
     result = dict(config)
@@ -656,6 +728,8 @@ def maybe_merge_user_provider_config(config: dict[str, object]) -> dict[str, obj
 
     _carry_model(result)
     _merge_plugins(result)
+    _merge_mcp(result)
+    _carry_permission(result)
     result.setdefault("$schema", "https://opencode.ai/config.json")
 
     return result
