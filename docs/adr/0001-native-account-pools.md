@@ -15,30 +15,31 @@ This change introduces native multi-account pools directly into Omnigent's sessi
 ## Decisions
 
 ### 1. Account Pools Configuration
-Account pools are defined declaratively in the server configuration (`--config`) or within an agent spec (`executor.config.account_pools`):
+Account pools are defined in the server configuration (`server.account_pools`). Agent executor config values are strings in the native loader; nested pool mappings there are not supported.
 
 ```yaml
-account_pools:
-  codex:
-    - id: codex-account-primary
-      codex_home: /var/accounts/codex-1
-    - id: codex-account-secondary
-      codex_home: /var/accounts/codex-2
-  antigravity:
-    - id: agy-account-alpha
-      gemini_dir: /var/accounts/agy-alpha/.gemini
-    - id: agy-account-beta
-      gemini_dir: /var/accounts/agy-beta/.gemini
+server:
+  account_pools:
+    codex:
+      - id: codex-account-primary
+        codex_home: /var/accounts/codex-1
+      - id: codex-account-secondary
+        codex_home: /var/accounts/codex-2
+    antigravity:
+      - id: agy-account-alpha
+        gemini_dir: /var/accounts/agy-alpha/.gemini
+      - id: agy-account-beta
+        gemini_dir: /var/accounts/agy-beta/.gemini
 ```
 
-- **Harness Mapping**: The pool is identified by harness family (`codex`, `antigravity`, `opencode`).
+- **Harness Mapping**: The pool is identified by harness family (`codex`, `antigravity`, or their native harness names).
 - **Credential Hygiene**: Pools store local directory pointers (`codex_home`, `gemini_dir`) or credential references. Raw tokens or secrets are never stored in pool configs, conversation labels, or logs.
 
 ### 2. Selection Algorithm
 Account selection executes strictly at session creation time:
-1. **Explicit Pin First**: If `labels["omnigent.account.id"]` is already specified (or preserved from a parent/prior turn), it is strictly honored.
+1. **Explicit Pin First**: Explicit account IDs and native `codex_home`/`gemini_dir` paths pin identity. A known ID and conflicting home are rejected; a home absent from the pool remains unchanged without an invented ID. Existing sessions are never reassigned.
 2. **Fewest Active Sessions**: Select the account with the minimum number of active sessions (sum of DB active sessions and pending in-flight reservations).
-   - Active DB states: `running`, `waiting`, `pending` with fresh runner heartbeat.
+   - Active DB states: `running` and `waiting` require a fresh runner heartbeat. New never-reported/pending launches count for 120 seconds after creation; idle/failed/stale sessions do not count. Existing home-only sessions are matched to configured account paths.
    - Excluded DB states: `idle`, `stopped`, `disconnected`, `closed`, `failed`, `completed`, `archived`, or stale heartbeat.
 3. **Known Quota Preference**: On identical active session counts, accounts with known remaining quota are selected before unknown accounts (unknown is not assumed unlimited). Accounts with explicitly exhausted quota or authentication errors are skipped.
 4. **Most Remaining Subscription Quota**: Among accounts with known quota, pick by greatest primary remaining quota (5h rolling window), then secondary quota (weekly window).
@@ -46,8 +47,8 @@ Account selection executes strictly at session creation time:
 
 ### 3. Concurrency and Reservation Lifecycle
 To prevent race conditions during concurrent session spawns:
-- An atomic in-memory reservation is acquired prior to DB persistence.
-- The reservation is released once the conversation record is persisted (or on failure).
+- One manager per server process serializes count, rank, and reservation acquisition before DB persistence.
+- The reservation transfers to the persisted startup-window count as soon as the conversation record exists (or releases on failure). Multi-process/server-replica reservation coordination is not supported by this in-memory patch.
 - If session creation fails or errors out, the reservation is released immediately.
 
 ### 4. Runner Environment Forwarding
@@ -62,6 +63,9 @@ The existing native runner infrastructure forwards these labels to the spawned h
 - No dynamic model routing changes (native smart routing remains untouched).
 - No database migrations (uses existing `conversation_labels` and `live_status`).
 - No UI alterations.
+
+### 6. Quota inspection and limits
+Codex uses the official `account/rateLimits/read` app-server RPC with a bounded timeout and no inference. Antigravity reads fresh local quota JSON only: `<gemini_dir>/quota.json`, `<gemini_dir>/cache/quota.json`, or an explicit account `quota_cache` path. A cache is a mapping of account IDs to `gemini:five_hour`/`gemini:weekly` and `claude:five_hour`/`claude:weekly` remaining percentages, optionally wrapped as `{"ts": <epoch>, "accounts": {...}}`. It must be refreshed externally; this patch does not run an Antigravity quota polling daemon. Snapshots older than 120 seconds are unknown. The selected model family determines which quota applies. Missing probes/cache, unsupported providers (including OpenCode), and probe errors remain unknown; no quota is inferred from local attempts. In-memory probe results expire after 60 seconds and distinguish account paths and model families.
 
 ## Upgrade & Compatibility
 - **Fork Baseline**: Developed on `datamonsterr/omnigent` against commit `4173ab3d` to preserve existing user patches.

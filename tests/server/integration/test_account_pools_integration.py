@@ -180,3 +180,90 @@ async def test_session_create_fails_when_pool_exhausted_without_silent_fallback(
     )
     assert resp.status_code == 400
     assert "All accounts in pool 'codex' are exhausted or unavailable" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_real_parent_child_spawns_consume_shared_pool(client, account_pools_config):
+    from omnigent.runtime import get_caps
+
+    get_caps().account_pools = account_pools_config
+    agent = await create_test_agent(client)
+    parent = await client.post(
+        "/v1/sessions", json={"agent_id": agent["id"], "title": "Polly brain"}
+    )
+    assert parent.status_code == 201
+    labels = []
+    for index in range(2):
+        response = await client.post(
+            "/v1/sessions",
+            json={
+                "agent_id": agent["id"],
+                "title": f"Child {index}",
+                "parent_session_id": parent.json()["id"],
+                "harness_override": "codex-native",
+            },
+        )
+        assert response.status_code == 201, response.text
+        labels.append(response.json()["labels"])
+    assert [item[ACCOUNT_ID_LABEL_KEY] for item in labels] == ["codex-1", "codex-2"]
+    manager = client._transport.app.state.account_pool_manager
+    assert manager.reservation_tracker.count_pending("codex-1") == 0
+    assert manager.reservation_tracker.count_pending("codex-2") == 0
+
+
+@pytest.mark.asyncio
+async def test_endpoint_honors_explicit_home_and_rejects_identity_mismatch(
+    client, account_pools_config
+):
+    from omnigent.runtime import get_caps
+
+    get_caps().account_pools = account_pools_config
+    agent = await create_test_agent(client)
+    body = {
+        "agent_id": agent["id"],
+        "title": "Home pin",
+        "harness_override": "codex-native",
+        "labels": {CODEX_HOME_LABEL_KEY: "/var/accounts/codex-2"},
+    }
+    response = await client.post("/v1/sessions", json=body)
+    assert response.status_code == 201, response.text
+    assert response.json()["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-2"
+    body["labels"][ACCOUNT_ID_LABEL_KEY] = "codex-1"
+    response = await client.post("/v1/sessions", json=body)
+    assert response.status_code == 400
+    assert "conflicts" in response.text
+
+
+@pytest.mark.asyncio
+async def test_concurrent_endpoint_spawns_reserve_distinct_accounts(client, account_pools_config):
+    import asyncio
+
+    from omnigent.account_pools.quota import AccountQuota
+    from omnigent.runtime import get_caps
+
+    get_caps().account_pools = account_pools_config
+    manager = AccountPoolManager(
+        config=account_pools_config, quota_provider=lambda *_: AccountQuota()
+    )
+    client._transport.app.state.account_pool_manager = manager
+    agent = await create_test_agent(client)
+    responses = await asyncio.gather(
+        *[
+            client.post(
+                "/v1/sessions",
+                json={
+                    "agent_id": agent["id"],
+                    "title": f"Parallel {index}",
+                    "harness_override": "codex-native",
+                },
+            )
+            for index in range(2)
+        ]
+    )
+    assert all(response.status_code == 201 for response in responses), [
+        response.text for response in responses
+    ]
+    assert sorted(response.json()["labels"][ACCOUNT_ID_LABEL_KEY] for response in responses) == [
+        "codex-1",
+        "codex-2",
+    ]

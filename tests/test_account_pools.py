@@ -406,54 +406,94 @@ def test_parse_account_pools_declarative():
     assert parse_account_pools("bad") is None
 
 
-def test_count_active_sessions_with_mock_store():
-    # Verify active counting correctly categorizes running/waiting/pending
-    # and excludes idle/stopped/closed
-    class FakeConv:
-        def __init__(
-            self,
-            labels: dict[str, str],
-            live_status: str,
-            is_archived: bool = False,
-            last_seen: int | None = None,
-            status: str = "running",
-        ):
-            self.labels = labels
-            self.live_status = live_status
-            self.is_archived = is_archived
-            self.archived_at = 123 if is_archived else None
-            self.last_seen = last_seen
-            self.status = status
+def test_count_real_store_active_pending_and_missing_heartbeat(db_uri):
+    from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 
+    store = SqlAlchemyConversationStore(db_uri)
     now = int(time.time())
-    convs = [
-        # Active: running
-        FakeConv({ACCOUNT_ID_LABEL_KEY: "acc-1"}, live_status="running", last_seen=now),
-        # Active: waiting
-        FakeConv({ACCOUNT_ID_LABEL_KEY: "acc-1"}, live_status="waiting", last_seen=now),
-        # Inactive: idle
-        FakeConv({ACCOUNT_ID_LABEL_KEY: "acc-1"}, live_status="idle", last_seen=now),
-        # Inactive: stopped
-        FakeConv({ACCOUNT_ID_LABEL_KEY: "acc-1"}, live_status="stopped", last_seen=now),
-        # Inactive: archived
-        FakeConv(
-            {ACCOUNT_ID_LABEL_KEY: "acc-1"}, live_status="running", is_archived=True, last_seen=now
-        ),
-        # Inactive: stale last_seen (e.g. 1 hour ago)
-        FakeConv({ACCOUNT_ID_LABEL_KEY: "acc-1"}, live_status="running", last_seen=now - 3600),
-        # Other account: running
-        FakeConv({ACCOUNT_ID_LABEL_KEY: "acc-2"}, live_status="running", last_seen=now),
+    for status, heartbeat in [
+        ("running", now),
+        ("waiting", now),
+        ("running", None),
+        ("running", now - 3600),
+        ("idle", now),
+        (None, None),
+    ]:
+        conv = store.create_conversation(
+            labels={ACCOUNT_ID_LABEL_KEY: "acc-1"}, runner_id=f"r-{status}-{heartbeat}"
+        )
+        if status is not None:
+            store.set_session_live_status(conv.id, status)
+        if heartbeat is not None:
+            store.touch_runner_liveness([conv.runner_id], now=heartbeat)
+    assert AccountPoolManager().count_active_sessions(store, "acc-1") == 3
+
+
+def test_count_paginates_actual_store(db_uri, monkeypatch):
+    from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+
+    store = SqlAlchemyConversationStore(db_uri)
+    for _ in range(5):
+        store.create_conversation(labels={ACCOUNT_ID_LABEL_KEY: "acc-1"})
+    original = store.list_conversations
+
+    def small_pages(**kwargs):
+        kwargs["limit"] = 2
+        return original(**kwargs)
+
+    monkeypatch.setattr(store, "list_conversations", small_pages)
+    assert AccountPoolManager().count_active_sessions(store, "acc-1") == 5
+
+
+def test_store_failures_do_not_become_zero_sessions():
+    store = MagicMock()
+    store.list_conversations.side_effect = RuntimeError("database unavailable")
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        AccountPoolManager().count_active_sessions(store, "acc-1")
+
+
+def test_concurrent_selection_reserves_atomically():
+    from concurrent.futures import ThreadPoolExecutor
+
+    pool = _make_pool([AccountConfig(id="a"), AccountConfig(id="b")])
+    mgr = AccountPoolManager(quota_provider=lambda *_: AccountQuota())
+    # Yield after reading pending counts, when an unlocked selector can race.
+    count_pending = mgr.reservation_tracker.count_pending
+
+    def delayed_count(account_id):
+        result = count_pending(account_id)
+        time.sleep(0.01)
+        return result
+
+    mgr.reservation_tracker.count_pending = delayed_count
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: mgr.select_account(pool)[0].id, range(2)))
+    assert sorted(results) == ["a", "b"]
+
+
+@pytest.mark.parametrize(
+    "key,home,harness",
+    [
+        (CODEX_HOME_LABEL_KEY, "codex_home", "codex-native"),
+        (GEMINI_DIR_LABEL_KEY, "gemini_dir", "antigravity-native"),
+    ],
+)
+def test_explicit_home_pins_identity_without_account_id(key, home, harness):
+    accounts = [
+        AccountConfig(id="a", **{home: "/tmp/account-a"}),
+        AccountConfig(id="b", **{home: "/tmp/account-b"}),
     ]
-
-    mock_store = MagicMock()
-    mock_store.list_conversations.return_value = MagicMock(items=convs)
-
-    mgr = AccountPoolManager()
-    count_1 = mgr.count_active_sessions(mock_store, "acc-1")
-    count_2 = mgr.count_active_sessions(mock_store, "acc-2")
-
-    assert count_1 == 2  # running + waiting, excluding idle, stopped, archived, stale
-    assert count_2 == 1
+    pool = _make_pool(accounts, name=harness)
+    manager = AccountPoolManager(config=AccountPoolsConfig(pools={harness: pool}))
+    labels = {key: "/tmp/account-b"}
+    assert prepare_session_account(labels, harness, None, None, manager) is None
+    assert labels[ACCOUNT_ID_LABEL_KEY] == "b"
+    labels = {key: "/tmp/unlisted-home"}
+    assert prepare_session_account(labels, harness, None, None, manager) is None
+    assert ACCOUNT_ID_LABEL_KEY not in labels
+    labels = {key: "/tmp/account-b", ACCOUNT_ID_LABEL_KEY: "a"}
+    with pytest.raises(ValueError, match="conflicts"):
+        prepare_session_account(labels, harness, None, None, manager)
 
 
 def test_agent_spec_declared_pools():
@@ -493,3 +533,63 @@ def test_agent_spec_declared_pools():
     assert labels[ACCOUNT_ID_LABEL_KEY] == "spec-codex-1"
     assert labels[CODEX_HOME_LABEL_KEY] == str(Path("/tmp/spec-c1").resolve())
     mgr.reservation_tracker.release(handle)
+
+
+def test_existing_home_only_sessions_are_counted(db_uri):
+    from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+
+    account = AccountConfig(id="a", codex_home="/tmp/account-a")
+    manager = AccountPoolManager(config=AccountPoolsConfig(pools={"codex": _make_pool([account])}))
+    store = SqlAlchemyConversationStore(db_uri)
+    store.create_conversation(labels={CODEX_HOME_LABEL_KEY: "/tmp/account-a"})
+    assert manager.count_active_sessions(store, "a") == 1
+
+
+def test_agy_uses_selected_model_family_and_ignores_stale_cache(tmp_path):
+    import json
+
+    from omnigent.account_pools.quota import (
+        clear_quota_cache,
+        get_default_quota_provider,
+        probe_agy_quota,
+    )
+
+    path = tmp_path / "quota.json"
+    path.write_text(
+        json.dumps(
+            {"ts": time.time(), "accounts": {"a": {"gemini:five_hour": 80, "claude:five_hour": 0}}}
+        )
+    )
+    account = AccountConfig(id="a", gemini_dir=tmp_path)
+    clear_quota_cache()
+    manager = AccountPoolManager(quota_provider=get_default_quota_provider())
+    assert manager.get_quota(account, "gemini-flash").five_hour.remaining_pct == 80
+    assert manager.get_quota(account, "claude-sonnet").is_exhausted()
+    path.write_text(
+        json.dumps({"ts": time.time() - 3600, "accounts": {"a": {"gemini:five_hour": 0}}})
+    )
+    assert not probe_agy_quota(tmp_path, "a").is_known()
+    assert not probe_agy_quota(tmp_path, "a").is_exhausted()
+
+
+def test_quota_cache_does_not_mix_same_id_different_homes(monkeypatch):
+    from omnigent.account_pools import quota
+
+    quota.clear_quota_cache()
+    monkeypatch.setattr(
+        quota,
+        "probe_codex_account_limits",
+        lambda *args, **kw: AccountQuota(
+            five_hour=WindowQuota(remaining_pct=10 if kw["codex_home"].endswith("a") else 90),
+            status="known",
+        ),
+    )
+    provider = quota.get_default_quota_provider()
+    assert (
+        provider("same", AccountConfig(id="same", codex_home="/tmp/a")).five_hour.remaining_pct
+        == 10
+    )
+    assert (
+        provider("same", AccountConfig(id="same", codex_home="/tmp/b")).five_hour.remaining_pct
+        == 90
+    )
