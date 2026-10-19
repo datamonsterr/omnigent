@@ -15,21 +15,20 @@ This change introduces native multi-account pools directly into Omnigent's sessi
 ## Decisions
 
 ### 1. Account Pools Configuration
-Account pools are defined in the server configuration (`server.account_pools`). Agent executor config values are strings in the native loader; nested pool mappings there are not supported.
+Account pools are defined in the server configuration (`account_pools` at the top level of the file supplied to `omnigent server --config`). Agent executor config values are strings in the native loader; nested pool mappings there are not supported.
 
 ```yaml
-server:
-  account_pools:
-    codex:
-      - id: codex-account-primary
-        codex_home: /var/accounts/codex-1
-      - id: codex-account-secondary
-        codex_home: /var/accounts/codex-2
-    antigravity:
-      - id: agy-account-alpha
-        gemini_dir: /var/accounts/agy-alpha/.gemini
-      - id: agy-account-beta
-        gemini_dir: /var/accounts/agy-beta/.gemini
+account_pools:
+  codex:
+    - id: codex-account-primary
+      codex_home: /var/accounts/codex-1
+    - id: codex-account-secondary
+      codex_home: /var/accounts/codex-2
+  antigravity:
+    - id: agy-account-alpha
+      gemini_dir: /var/accounts/agy-alpha/.gemini
+    - id: agy-account-beta
+      gemini_dir: /var/accounts/agy-beta/.gemini
 ```
 
 - **Harness Mapping**: The pool is identified by harness family (`codex`, `antigravity`, or their native harness names).
@@ -69,7 +68,7 @@ Codex uses the official `account/rateLimits/read` app-server RPC with a bounded 
 
 ## Upgrade & Compatibility
 - **Fork Baseline**: Developed on `datamonsterr/omnigent` against commit `4173ab3d` to preserve existing user patches.
-- **Future Omnigent Upgrade**: Upstream Omnigent v0.18+ refactors parts of runner lifecycle and session metadata. Once upstream v0.18 stabilizes, we recommend porting this native account pool pattern rather than rebasing existing working checkouts in place.
+- **Future Omnigent Upgrade**: Reconcile future upstream versions in an isolated checkout, porting only the required account changes and running the native harness regression suites before switching the runtime. This patch does not upgrade the current customized installation.
 
 ## Verification & Manual Testing Steps
 
