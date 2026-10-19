@@ -11556,6 +11556,7 @@ async def _create_session_from_existing_agent(
 
     reservation_handle = None
     account_pool_mgr = None
+    spec_for_env = sub_spec or own_spec or selection_spec
     try:
         app_state = getattr(getattr(request, "app", None), "state", None)
         account_pool_mgr = getattr(app_state, "account_pool_manager", None)

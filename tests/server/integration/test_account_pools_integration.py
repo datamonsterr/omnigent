@@ -267,3 +267,42 @@ async def test_concurrent_endpoint_spawns_reserve_distinct_accounts(client, acco
         "codex-1",
         "codex-2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_create_new_main_spec_resolution_regression(
+    client: AsyncClient, account_pools_config: AccountPoolsConfig
+):
+    """Regression test: verify account assignment on new-main without spec_for_env NameError."""
+    from omnigent.runtime import get_caps
+
+    caps = get_caps()
+    caps.account_pools = account_pools_config
+    if hasattr(client._transport.app.state, "account_pool_manager"):
+        delattr(client._transport.app.state, "account_pool_manager")
+
+    # Normal agent with loaded spec resolves spec_for_env from selection_spec
+    agent = await create_test_agent(client, name="main-compat-agent")
+    resp = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent["id"],
+            "title": "Main Compat Session",
+            "harness_override": "codex-native",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-1"
+
+    # Pinned account resolves and preserves pin on new-main
+    resp_pinned = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent["id"],
+            "title": "Main Compat Pinned",
+            "harness_override": "codex-native",
+            "labels": {ACCOUNT_ID_LABEL_KEY: "codex-2"},
+        },
+    )
+    assert resp_pinned.status_code == 201, resp_pinned.text
+    assert resp_pinned.json()["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-2"
