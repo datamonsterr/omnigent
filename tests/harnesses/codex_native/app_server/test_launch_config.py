@@ -870,6 +870,8 @@ async def test_apply_codex_thread_effort_updates_the_loaded_thread(
 
     requests: list[tuple[str, dict[str, object]]] = []
 
+    monkeypatch.setattr(codex_native_app_server, "_effort_catalog_cache", {})
+
     class _FakeClient:
         def __init__(self, *, ws_url: str, client_name: str) -> None:
             assert ws_url == "ws://127.0.0.1:9876"
@@ -883,15 +885,34 @@ async def test_apply_codex_thread_effort_updates_the_loaded_thread(
 
         async def request(self, method: str, params: dict[str, object]) -> dict[str, object]:
             requests.append((method, params))
+            if method == "model/list":
+                return {
+                    "result": {
+                        "data": [
+                            {
+                                "id": "gpt-5.6-sol",
+                                "reasoningEffort": ["low", "medium", "high", "xhigh", "ultra"],
+                            },
+                            {
+                                "id": "glm-5-2",
+                                "reasoningEffort": ["low", "medium"],
+                            },
+                        ]
+                    }
+                }
             return {"result": {}}
 
     monkeypatch.setattr(codex_native_app_server, "CodexAppServerClient", _FakeClient)
     await codex_native_app_server.apply_codex_thread_effort(
         "ws://127.0.0.1:9876", "thread_abc", "ultra", model=model
     )
-    assert requests == [
+    expected_requests: list[tuple[str, dict[str, object]]] = []
+    if model is not None:
+        expected_requests.append(("model/list", {"includeHidden": True}))
+    expected_requests.append(
         ("thread/settings/update", {"threadId": "thread_abc", "effort": expected_effort})
-    ]
+    )
+    assert requests == expected_requests
 
 
 @pytest.mark.asyncio

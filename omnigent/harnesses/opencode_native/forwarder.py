@@ -472,7 +472,7 @@ class OpenCodeNativeForwarder:
         info = props.get("info")
         if session_id is None and isinstance(info, Mapping):
             session_id = info.get("id")
-        if session_id is None:
+        if not isinstance(session_id, str):
             return self._session_id
         if session_id == self._opencode_session_id:
             return self._session_id

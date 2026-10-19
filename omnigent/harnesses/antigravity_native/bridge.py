@@ -290,11 +290,12 @@ def prune_orphaned_bridge_dirs() -> int:
 
 def _agy_orphan_retention_expired(bridge_dir: Path) -> bool:
     """Retain native history; prune only demonstrably disposable bridge state."""
+    owner_marker = bridge_dir / native_bridge_common.OWNER_PID_FILENAME
     agy_home = agy_home_dir(bridge_dir)
     try:
         mode = agy_home.lstat().st_mode
     except FileNotFoundError:
-        return True
+        return owner_marker.exists()
     except OSError:
         return False
     if not stat.S_ISDIR(mode):

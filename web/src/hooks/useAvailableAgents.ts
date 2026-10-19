@@ -72,7 +72,11 @@ function displayNameForAgent(name: string, harness?: string | null): string {
   const nativeAgent = nativeCodingAgentForAgentName(name);
   if (nativeAgent) return nativeAgent.displayName;
   if (harness != null && harness === name) {
-    return nativeCodingAgentForHarness(harness)?.displayName ?? DISPLAY_NAMES[name] ?? capitalizeAgentName(name);
+    return (
+      nativeCodingAgentForHarness(harness)?.displayName ??
+      DISPLAY_NAMES[name] ??
+      capitalizeAgentName(name)
+    );
   }
   return DISPLAY_NAMES[name] ?? capitalizeAgentName(name);
 }

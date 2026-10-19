@@ -3207,14 +3207,9 @@ export function NewChatLandingScreen() {
     data: hostOpencodeModelOptions,
     isLoading: hostOpencodeModelsLoading,
     error: hostOpencodeModelsError,
-  } = useHostModelOptions(
-    selectedHostId,
-    "opencode-native",
-    canLoadHostModels("opencode-native"),
-    {
-      poll: selectedNativeHarness === "opencode-native",
-    },
-  );
+  } = useHostModelOptions(selectedHostId, "opencode-native", canLoadHostModels("opencode-native"), {
+    poll: selectedNativeHarness === "opencode-native",
+  });
   const availableOpencodeModels = availableHostModels(
     "opencode-native",
     hostOpencodeModelOptions,
@@ -3447,7 +3442,11 @@ export function NewChatLandingScreen() {
       // Routing inherits the picked harness's defaults, not a previous selection's mode.
       return [{ label: "Permission mode", value: AUTO_PERMISSION_MODE.label }];
     }
-    if (supportsModelPicker && !supportsPermissionMode && selectedNativeHarness !== "antigravity-native") {
+    if (
+      supportsModelPicker &&
+      !supportsPermissionMode &&
+      selectedNativeHarness !== "antigravity-native"
+    ) {
       const pickerCatalog =
         selectedNativeHarness === "opencode-native" ? opencodeModelOptions : piModelOptions;
       const modelValue =
@@ -3542,7 +3541,9 @@ export function NewChatLandingScreen() {
       const modelValue = visibleModelLabel(
         pickedAgyRow ? nativeModelLabel(pickedAgyRow) : defaultModelLabel(antigravityModelOptions),
       );
-      const effortValue = pickedModel.startsWith("claude-") ? null : normalizeEffortLabel(pickedEffort);
+      const effortValue = pickedModel.startsWith("claude-")
+        ? null
+        : normalizeEffortLabel(pickedEffort);
       return [
         { label: "Model", value: modelValue },
         ...(effortValue ? [{ label: "Effort", value: effortValue }] : []),
@@ -3789,22 +3790,22 @@ export function NewChatLandingScreen() {
                 pickedModel || codexModelOptions.find((option) => option.isDefault)?.id,
               ).map((value) => ({ value, label: normalizeEffortLabel(value) }))
             : selectedNativeHarness === "antigravity-native"
-              ? (pickedModel.startsWith("claude-")
-                  ? []
-                  : [
-                      { value: "low", label: "Low" },
-                      { value: "medium", label: "Medium" },
-                      { value: "high", label: "High" },
-                    ])
+              ? pickedModel.startsWith("claude-")
+                ? []
+                : [
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                  ]
               : selectedNativeHarness === "opencode-native"
                 ? // No native effort axis: the rungs select a model tier
                   // server-side (low/medium/high → longcat/deepseek/muse),
                   // mirroring the operator's router tiers.
                   [
-                      { value: "low", label: "Low" },
-                      { value: "medium", label: "Medium" },
-                      { value: "high", label: "High" },
-                    ]
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High" },
+                  ]
                 : [];
   const rememberPickerOptions = (harness: string, options: HarnessOptions) => {
     const previous = pickerEdits;
@@ -4301,8 +4302,7 @@ export function NewChatLandingScreen() {
     if (selectedNativeHarness === "opencode-native") {
       setPickedModel(
         projectSeed(opencodeModelOptions) ??
-          (stored.model != null &&
-          opencodeModelOptions.some((model) => model.id === stored.model)
+          (stored.model != null && opencodeModelOptions.some((model) => model.id === stored.model)
             ? stored.model
             : ""),
       );

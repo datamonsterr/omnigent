@@ -12501,9 +12501,7 @@ async def test_external_opencode_subagent_start_mints_child_session(
     )
     labels = child["labels"]
     assert labels["omnigent.wrapper"] == "opencode-native-ui-subagent"
-    assert (
-        labels["omnigent.opencode_native.subagent_session_id"] == "ses_child_alpha"
-    )
+    assert labels["omnigent.opencode_native.subagent_session_id"] == "ses_child_alpha"
     assert labels["omnigent.opencode_native.subagent_agent"] == "build"
 
 

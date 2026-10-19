@@ -31,7 +31,11 @@ import { useHosts } from "@/hooks/useHosts";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { sandboxOptionLabel } from "@/lib/capabilities";
 import { useCreateScheduledTask, useUpdateScheduledTask } from "@/hooks/useScheduledTasks";
-import { isNativeCodingAgent, nativeAgentHasCapability, nativeCodingAgentForAvailableAgent } from "@/lib/nativeCodingAgents";
+import {
+  isNativeCodingAgent,
+  nativeAgentHasCapability,
+  nativeCodingAgentForAvailableAgent,
+} from "@/lib/nativeCodingAgents";
 import { isAcpHarnessAgent, selectableSessionAgents } from "@/lib/agentGrouping";
 import {
   isBackdropOverlay,
@@ -156,11 +160,9 @@ export function CreateScheduledTaskDialog({
   // full agent list so a task bound to an agent the picker hides still gates
   // on its real capabilities.
   const modelEffortAgent = agents?.find((a) => a.id === effectiveAgentId);
-  const modelEffortHarness =
-    nativeCodingAgentForAvailableAgent(modelEffortAgent)?.harness ?? null;
+  const modelEffortHarness = nativeCodingAgentForAvailableAgent(modelEffortAgent)?.harness ?? null;
   const showPermissionMode = nativeAgentHasCapability(modelEffortAgent, "permissionMode");
-  const showModelEffort =
-    showPermissionMode || modelEffortHarness === "opencode-native";
+  const showModelEffort = showPermissionMode || modelEffortHarness === "opencode-native";
 
   // ── Nested dropdown dismiss guard ─────────────────────────────────────────
   // The agent picker and host/schedule Selects portal dropdowns OUTSIDE DialogContent.

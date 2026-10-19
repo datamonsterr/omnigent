@@ -12,3 +12,12 @@ Use an isolated server with three Codex account agents and four Antigravity acco
 8. Repeat the selector and configuration steps with the keyboard. Verify visible labels, focus, and Escape dismissal. Confirm ordinary built-in vendor labels and icons remain correct.
 
 Record screenshots of the selector and model/effort menus, plus a sanitized API or native-request cross-check. Distinguish browser/component tests, real process routing, and completed live provider replies in the verification report. Stop only the test sessions and isolated processes created for this run.
+
+# OpenCode native controls and child session mirroring
+
+1. Launch an OpenCode native session with custom provider and model tier options (Low / Medium / High). Verify model override maps to server-side router tiers.
+2. Trigger sub-agent dispatch and observe child session creation under the root session rail in the UI.
+3. Validate known defects:
+   - Child output shared flush: observe if concurrent child output flushes share stdout buffer under burst conditions.
+   - Permission allow overriding synthesized deny: verify whether user explicit permission grant can override a synthesized policy deny.
+   - Effort switching providers: verify behavior when switching providers while retaining previous reasoning effort settings.

@@ -4058,9 +4058,7 @@ def resolve_native_codex_launch(
 
     explicit = load_runtime_inference_config(load_config())
     resolved_source_home = (
-        Path(source_codex_home).expanduser().resolve()
-        if source_codex_home is not None
-        else None
+        Path(source_codex_home).expanduser().resolve() if source_codex_home is not None else None
     )
     bound = resolve_bound_provider(
         explicit, "codex-native", spec.executor.auth if spec is not None else None

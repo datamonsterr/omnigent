@@ -5043,7 +5043,10 @@ function useResolvedComposerModel(
     : nativeVendorOwnsModel
       ? modelPickerKind === "cursor" || modelPickerKind === "kiro"
         ? sessionModelOverride
-        : modelPickerKind === "opencode" || modelPickerKind === "pi" || modelPickerKind === "devin" || modelPickerKind === "antigravity"
+        : modelPickerKind === "opencode" ||
+            modelPickerKind === "pi" ||
+            modelPickerKind === "devin" ||
+            modelPickerKind === "antigravity"
           ? (sessionModelOverride ?? llmModel)
           : null
       : isReportedModelPicker

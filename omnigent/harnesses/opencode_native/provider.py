@@ -561,9 +561,7 @@ def _user_opencode_config_files() -> tuple[Path, ...]:
     base = Path(xdg) if xdg else Path.home() / ".config"
     cfg_dir = base / "opencode"
     return tuple(
-        path
-        for path in (cfg_dir / "opencode.json", cfg_dir / "opencode.jsonc")
-        if path.is_file()
+        path for path in (cfg_dir / "opencode.json", cfg_dir / "opencode.jsonc") if path.is_file()
     )
 
 

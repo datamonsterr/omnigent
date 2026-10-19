@@ -163,36 +163,36 @@ export function ModelEffortFields({
       </div>
 
       {showPermissionMode && (
-      <div className="flex w-full min-w-0 flex-col gap-1.5" data-testid="task-permission-control">
-        <Label htmlFor="task-permission">Permission mode</Label>
-        <Select
-          value={permissionMode === "" ? PERMISSION_SELECT_DEFAULT : permissionMode}
-          componentId="tasks.scheduled.permission_mode"
-          valueHasNoPii
-          onValueChange={(v) => onPermissionModeChange(v === PERMISSION_SELECT_DEFAULT ? "" : v)}
-          onOpenChange={onSelectOpenChange}
-        >
-          <SelectTrigger
-            id="task-permission"
-            data-testid="task-permission-trigger"
-            className="w-full"
+        <div className="flex w-full min-w-0 flex-col gap-1.5" data-testid="task-permission-control">
+          <Label htmlFor="task-permission">Permission mode</Label>
+          <Select
+            value={permissionMode === "" ? PERMISSION_SELECT_DEFAULT : permissionMode}
+            componentId="tasks.scheduled.permission_mode"
+            valueHasNoPii
+            onValueChange={(v) => onPermissionModeChange(v === PERMISSION_SELECT_DEFAULT ? "" : v)}
+            onOpenChange={onSelectOpenChange}
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent
-            position="popper"
-            align="start"
-            className="w-(--radix-select-trigger-width)"
-          >
-            <SelectItem value={PERMISSION_SELECT_DEFAULT}>Default</SelectItem>
-            {CLAUDE_NATIVE_PERMISSION_MODES.map((m) => (
-              <SelectItem key={m.value} value={m.value}>
-                {m.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+            <SelectTrigger
+              id="task-permission"
+              data-testid="task-permission-trigger"
+              className="w-full"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent
+              position="popper"
+              align="start"
+              className="w-(--radix-select-trigger-width)"
+            >
+              <SelectItem value={PERMISSION_SELECT_DEFAULT}>Default</SelectItem>
+              {CLAUDE_NATIVE_PERMISSION_MODES.map((m) => (
+                <SelectItem key={m.value} value={m.value}>
+                  {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       )}
     </div>
   );

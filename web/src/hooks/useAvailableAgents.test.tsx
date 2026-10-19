@@ -649,7 +649,12 @@ describe("useAvailableAgents", () => {
         object: "list",
         data: [
           { id: "ag_codex", name: "codex-native-ui", harness: "codex-native", builtin: true },
-          { id: "ag_agy", name: "antigravity-native-ui", harness: "antigravity-native", builtin: true },
+          {
+            id: "ag_agy",
+            name: "antigravity-native-ui",
+            harness: "antigravity-native",
+            builtin: true,
+          },
           { id: "ag_c1", name: "conductor-codex-1", harness: "codex-native", builtin: false },
           { id: "ag_c2", name: "conductor-codex-2", harness: "codex-native", builtin: false },
           { id: "ag_c3", name: "conductor-codex-3", harness: "codex-native", builtin: false },
