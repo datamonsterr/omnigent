@@ -9,8 +9,13 @@ import selectors
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from omnigent.account_pools.models import AccountConfig
 
 
 @dataclass
@@ -257,3 +262,64 @@ def probe_codex_account_limits(
             for stream in (process.stdin, process.stdout):
                 if stream is not None:
                     stream.close()
+
+
+def probe_agy_quota(
+    gemini_dir: Path | str,
+    account_id: str | None = None,
+) -> AccountQuota:
+    """Probe Antigravity quota from local cached JSON without inference."""
+    base_dir = Path(gemini_dir)
+    for candidate in (
+        base_dir / "quota.json",
+        base_dir / "cache" / "quota.json",
+        base_dir / "accounts.json",
+    ):
+        if candidate.is_file():
+            try:
+                data = json.loads(candidate.read_text())
+                return parse_agy_quota(data, account_id=account_id)
+            except Exception:  # noqa: BLE001 - fallback if json file cannot be parsed
+                continue
+    return AccountQuota(status="unknown")
+
+
+_quota_cache: dict[str, tuple[float, AccountQuota]] = {}
+
+
+def clear_quota_cache() -> None:
+    """Clear memory quota cache (useful for tests)."""
+    _quota_cache.clear()
+
+
+def get_default_quota_provider(
+    cache_ttl_seconds: float = 60.0,
+) -> Callable[[str, AccountConfig], AccountQuota]:
+    """Return an inference-free cached quota provider function."""
+
+    def _provider(account_id: str, account: AccountConfig) -> AccountQuota:
+        now = time.monotonic()
+        cached = _quota_cache.get(account_id)
+        if cached is not None:
+            ts, quota = cached
+            if now - ts < cache_ttl_seconds:
+                return quota
+
+        res: AccountQuota | None = None
+        if getattr(account, "codex_home", None) is not None:
+            codex_cmd = shutil.which("codex") or "codex"
+            res = probe_codex_account_limits(
+                codex_cmd,
+                timeout_seconds=2.0,
+                codex_home=str(account.codex_home),
+            )
+        elif getattr(account, "gemini_dir", None) is not None:
+            res = probe_agy_quota(account.gemini_dir, account_id=account.id)
+
+        if res is None:
+            res = AccountQuota(status="unknown")
+
+        _quota_cache[account_id] = (now, res)
+        return res
+
+    return _provider

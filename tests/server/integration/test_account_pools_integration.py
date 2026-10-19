@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
 from httpx import AsyncClient
 
 from omnigent.account_pools.manager import AccountPoolManager
@@ -46,12 +45,13 @@ def account_pools_config() -> AccountPoolsConfig:
 @pytest.mark.asyncio
 async def test_session_create_picks_account_and_forwards_env(
     client: AsyncClient,
-    app: FastAPI,
     account_pools_config: AccountPoolsConfig,
 ):
-    # Attach account pool manager to app state
-    mgr = AccountPoolManager(config=account_pools_config)
-    app.state.account_pool_manager = mgr
+    # Test real endpoint integration through RuntimeCaps
+    from omnigent.runtime import get_caps
+
+    caps = get_caps()
+    caps.account_pools = account_pools_config
 
     # Create agent
     agent = await create_test_agent(client)
@@ -73,13 +73,8 @@ async def test_session_create_picks_account_and_forwards_env(
     assert labels1.get(ACCOUNT_POOL_LABEL_KEY) == "codex"
     assert labels1.get(CODEX_HOME_LABEL_KEY) == str(Path("/var/accounts/codex-1").resolve())
 
-    # 2. Second session spawn for codex picks codex-2 (fewest active sessions)
-    # Simulate session 1 being active (running)
-    from omnigent.runtime import get_conversation_store
-
-    conv_store = get_conversation_store()
-    conv_store.set_session_live_status(data1["id"], "running")
-
+    # 2. Second session spawn for codex picks codex-2 automatically!
+    # Because session 1 is in startup launch window (< 120s in DB), codex-1 is active!
     resp2 = await client.post(
         "/v1/sessions",
         json={
@@ -113,11 +108,12 @@ async def test_session_create_picks_account_and_forwards_env(
 @pytest.mark.asyncio
 async def test_session_create_antigravity_forwards_gemini_dir(
     client: AsyncClient,
-    app: FastAPI,
     account_pools_config: AccountPoolsConfig,
 ):
-    mgr = AccountPoolManager(config=account_pools_config)
-    app.state.account_pool_manager = mgr
+    from omnigent.runtime import get_caps
+
+    caps = get_caps()
+    caps.account_pools = account_pools_config
 
     agent = await create_test_agent(client)
     agent_id = agent["id"]
@@ -135,3 +131,52 @@ async def test_session_create_antigravity_forwards_gemini_dir(
     assert labels.get(ACCOUNT_ID_LABEL_KEY) == "agy-1"
     assert labels.get(ACCOUNT_POOL_LABEL_KEY) == "antigravity"
     assert labels.get(GEMINI_DIR_LABEL_KEY) == str(Path("/var/accounts/agy-1/.gemini").resolve())
+
+
+@pytest.mark.asyncio
+async def test_session_create_fails_when_pool_exhausted_without_silent_fallback(
+    client: AsyncClient,
+):
+    # Configure an exhausted pool for codex
+    from omnigent.account_pools.quota import AccountQuota
+    from omnigent.runtime import get_caps
+
+    exhausted_pool = AccountPoolsConfig(
+        pools={
+            "codex": AccountPool(
+                name="codex",
+                accounts=[
+                    AccountConfig(id="codex-exhausted", codex_home=Path("/var/accounts/c-ex")),
+                ],
+            )
+        }
+    )
+    caps = get_caps()
+    caps.account_pools = exhausted_pool
+
+    # Attach manager with exhausted quota provider
+    mgr = AccountPoolManager(
+        config=exhausted_pool,
+        quota_provider=lambda _aid, _acc: AccountQuota(status="exhausted"),
+    )
+    from omnigent.runtime import get_caps
+
+    caps.account_pools = exhausted_pool
+
+    agent = await create_test_agent(client)
+    agent_id = agent["id"]
+
+    # Inject manager on app state
+    client._transport.app.state.account_pool_manager = mgr
+
+    # Spawn must fail clearly with 400 and NOT silently fall back to an unassigned session
+    resp = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent_id,
+            "title": "Exhausted Spawn",
+            "harness_override": "codex-native",
+        },
+    )
+    assert resp.status_code == 400
+    assert "All accounts in pool 'codex' are exhausted or unavailable" in resp.text
