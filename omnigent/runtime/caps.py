@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from omnigent.account_pools.models import AccountPoolsConfig
     from omnigent.server.routing_backend import RoutingBackends
     from omnigent.server.smart_routing import RoutingClient, RoutingSettings
     from omnigent.spec.types import LLMConfig, PolicySpec
@@ -111,3 +112,5 @@ class RuntimeCaps:
     # Always present so consumers read one value object instead of re-parsing
     # config; the defaults describe an unconfigured deployment.
     routing_settings: RoutingSettings = field(default_factory=_default_routing_settings)
+    # Declarative account pools configured in server --config or environment.
+    account_pools: AccountPoolsConfig | None = None
