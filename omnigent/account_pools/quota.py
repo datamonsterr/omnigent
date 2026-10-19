@@ -124,7 +124,9 @@ def parse_codex_rate_limits(result: dict[str, Any]) -> AccountQuota:
     return quota
 
 
-def parse_agy_quota(data: dict[str, Any], account_id: str) -> AccountQuota:
+def parse_agy_quota(
+    data: dict[str, Any], account_id: str | None, family: str | None = "gemini"
+) -> AccountQuota:
     """Parse Antigravity cached/probed quota state for an account."""
     quota = AccountQuota(
         five_hour=WindowQuota(status="unknown"),
@@ -134,7 +136,11 @@ def parse_agy_quota(data: dict[str, Any], account_id: str) -> AccountQuota:
     )
     if not isinstance(data, dict):
         return quota
-    acc_data = data.get(account_id) if isinstance(data.get(account_id), dict) else data
+    acc_data = (
+        data.get(account_id)
+        if account_id is not None and isinstance(data.get(account_id), dict)
+        else data
+    )
     if not isinstance(acc_data, dict):
         return quota
 
@@ -145,7 +151,7 @@ def parse_agy_quota(data: dict[str, Any], account_id: str) -> AccountQuota:
 
     for period in ("five_hour", "weekly"):
         raw_val = None
-        for fam in ("gemini", "claude"):
+        for fam in (family,) if family in ("gemini", "claude") else ():
             k = f"{fam}:{period}"
             if (
                 k in acc_data
@@ -267,24 +273,41 @@ def probe_codex_account_limits(
 def probe_agy_quota(
     gemini_dir: Path | str,
     account_id: str | None = None,
+    family: str | None = "gemini",
+    cache_path: Path | str | None = None,
+    max_age_seconds: float = 120.0,
 ) -> AccountQuota:
     """Probe Antigravity quota from local cached JSON without inference."""
     base_dir = Path(gemini_dir)
-    for candidate in (
-        base_dir / "quota.json",
-        base_dir / "cache" / "quota.json",
-        base_dir / "accounts.json",
-    ):
+    candidates = (
+        [Path(cache_path).expanduser()]
+        if cache_path
+        else [base_dir / "quota.json", base_dir / "cache" / "quota.json"]
+    )
+    for candidate in candidates:
         if candidate.is_file():
             try:
                 data = json.loads(candidate.read_text())
-                return parse_agy_quota(data, account_id=account_id)
-            except Exception:  # noqa: BLE001 - fallback if json file cannot be parsed
+                if not isinstance(data, dict):
+                    continue
+                observed = data.get("ts", candidate.stat().st_mtime)
+                if (
+                    not isinstance(observed, (int, float))
+                    or not 0 <= time.time() - observed < max_age_seconds
+                ):
+                    continue
+                accounts = data.get("accounts", data)
+                if not isinstance(accounts, dict):
+                    continue
+                quota = parse_agy_quota(accounts, account_id=account_id, family=family)
+                quota.observed_at = observed
+                return quota
+            except (OSError, ValueError, TypeError):
                 continue
     return AccountQuota(status="unknown")
 
 
-_quota_cache: dict[str, tuple[float, AccountQuota]] = {}
+_quota_cache: dict[tuple[str, str, str, str], tuple[float, AccountQuota]] = {}
 
 
 def clear_quota_cache() -> None:
@@ -299,27 +322,38 @@ def get_default_quota_provider(
 
     def _provider(account_id: str, account: AccountConfig) -> AccountQuota:
         now = time.monotonic()
-        cached = _quota_cache.get(account_id)
+        cache_key = (
+            account_id,
+            str(account.codex_home or account.gemini_dir),
+            str(account.metadata.get("quota_family")),
+            str(account.metadata.get("quota_cache")),
+        )
+        cached = _quota_cache.get(cache_key)
         if cached is not None:
             ts, quota = cached
             if now - ts < cache_ttl_seconds:
                 return quota
 
         res: AccountQuota | None = None
-        if getattr(account, "codex_home", None) is not None:
-            codex_cmd = shutil.which("codex") or "codex"
+        if account.codex_home is not None:
+            codex_cmd = account.command or shutil.which("codex") or "codex"
             res = probe_codex_account_limits(
                 codex_cmd,
                 timeout_seconds=2.0,
                 codex_home=str(account.codex_home),
             )
-        elif getattr(account, "gemini_dir", None) is not None:
-            res = probe_agy_quota(account.gemini_dir, account_id=account.id)
+        elif account.gemini_dir is not None:
+            res = probe_agy_quota(
+                account.gemini_dir,
+                account_id=account.id,
+                family=account.metadata.get("quota_family", "gemini"),
+                cache_path=account.metadata.get("quota_cache"),
+            )
 
         if res is None:
             res = AccountQuota(status="unknown")
 
-        _quota_cache[account_id] = (now, res)
+        _quota_cache[cache_key] = (now, res)
         return res
 
     return _provider

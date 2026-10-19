@@ -11552,6 +11552,8 @@ async def _create_session_from_existing_agent(
         initial_labels[REQUESTED_HOST_ID_LABEL_KEY] = body.requested_host_id
 
     # Account pool assignment (optional declarative pool or spec-level pool)
+    from omnigent.account_pools.manager import AccountPoolExhaustedError
+
     reservation_handle = None
     account_pool_mgr = None
     try:
@@ -11577,20 +11579,22 @@ async def _create_session_from_existing_agent(
                 spec_pools = parse_account_pools(exec_cfg["account_pools"])
                 if spec_pools:
                     account_pool_mgr = AccountPoolManager(config=spec_pools)
+                    if app_state is not None:
+                        app_state.account_pool_manager = account_pool_mgr
 
         if account_pool_mgr is not None:
-            from omnigent.account_pools.manager import (
-                AccountPoolExhaustedError,
-                prepare_session_account,
-            )
+            from omnigent.account_pools.manager import prepare_session_account
 
-            reservation_handle = prepare_session_account(
+            reservation_handle = await asyncio.to_thread(
+                prepare_session_account,
                 initial_labels=initial_labels,
                 harness=selected_harness,
                 sub_agent_name=body.sub_agent_name,
                 agent_spec=spec_for_env,
                 manager=account_pool_mgr,
                 conversation_store=conversation_store,
+                model=model_override
+                or getattr(getattr(spec_for_env, "executor", None), "model", None),
             )
     except AccountPoolExhaustedError as exc:
         raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
@@ -11651,6 +11655,9 @@ async def _create_session_from_existing_agent(
                 harness_override=harness_override,
                 **snapshot_kwargs,
             )
+        if reservation_handle is not None and account_pool_mgr is not None:
+            account_pool_mgr.reservation_tracker.release(reservation_handle)
+            reservation_handle = None
     except NameAlreadyExistsError as exc:
         if reservation_handle is not None and account_pool_mgr is not None:
             account_pool_mgr.reservation_tracker.release(reservation_handle)
