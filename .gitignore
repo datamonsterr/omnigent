@@ -46,6 +46,29 @@ omnigent/_build_info.py
 .claude/*
 !.claude/skills/
 
+# OpenSpec writes per-harness instruction files and commands. Track them so
+# every agent in the repo reads the same spec workflow. The .*/ rule above
+# would otherwise exclude them; scope each exception to the OpenSpec content
+# so local agent state stays untracked.
+!.agent/
+!.agent/skills/
+!.agent/workflows/
+!.codex/
+.codex/*
+!.codex/skills/
+!.cursor/
+!.cursor/commands/
+!.cursor/skills/
+!.gemini/
+!.gemini/commands/
+!.gemini/skills/
+!.opencode/
+!.opencode/commands/
+!.opencode/skills/
+!.pi/
+!.pi/prompts/
+!.pi/skills/
+
 # Local helper scripts
 run-ap-chat.sh
 run-omnigents.sh

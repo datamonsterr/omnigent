@@ -1481,6 +1481,9 @@ class SqlScheduledTask(OmnigentBase):
         deterministic id at fire time, so there is nothing to pin).
     :param timezone: IANA timezone the trigger is evaluated in, e.g.
         ``"America/Los_Angeles"``.
+    :param account_id: The subscription account every firing runs under, e.g.
+        ``"codex-acc1"``. ``None`` means the server picks one from the
+        harness's account pool at fire time.
     :param state: Lifecycle state — ``active``/``paused``/``deleted``.
         The scheduler only dispatches ``active`` tasks.
         Stored as a stable int code (see omnigent.db.enum_codecs
@@ -1551,6 +1554,12 @@ class SqlScheduledTask(OmnigentBase):
     # there is nothing to pin here).
     host_id: Mapped[str | None] = mapped_column(Uuid16, nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, server_default="UTC")
+    # The subscription account every firing of this task runs under. NULL = the
+    # server picks one from the harness's account pool at fire time. No DB
+    # foreign key (Rule R032): the account lives in the account pool tables and
+    # a deleted account leaves the task's pin dangling (the fire path then
+    # falls back to pool selection).
+    account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Enum stored as a stable int code (see omnigent.db.enum_codecs
     # SCHEDULED_TASK_STATE: active=1, paused=2, deleted=3). The
     # store converts to/from the string name at the row↔entity boundary.
@@ -1660,5 +1669,153 @@ class SqlScheduledTaskRun(OmnigentBase):
             "ix_scheduled_task_runs_conversation_id",
             "workspace_id",
             "conversation_id",
+        ),
+    )
+
+
+class SqlAccountPool(OmnigentBase):
+    """
+    SQLAlchemy model for the ``account_pools`` table.
+
+    A pool groups the subscription accounts that serve one harness family.
+    The pool is the unit an operator edits; its accounts carry the credential
+    home paths and are selected at session creation.
+
+    :param id: Pool id, unique per workspace, e.g. ``"pool_codex"``.
+    :param name: Human-readable pool name, unique per workspace, e.g.
+        ``"codex-native"``.
+    :param harness: The harness family the pool serves, e.g.
+        ``"codex-native"``.
+    :param description: Optional free-text description.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last write, or ``None``.
+    """
+
+    __tablename__ = "account_pools"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    harness: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        # Pool names are the lookup key an operator types, and the harness
+        # lookup at session-create time reads the pool by name.
+        UniqueConstraint("workspace_id", "name", name="uq_account_pools_name"),
+        # Session-create resolves a pool by harness family.
+        Index("ix_account_pools_harness", "workspace_id", "harness", "name"),
+    )
+
+
+class SqlAccountPoolAccount(OmnigentBase):
+    """
+    SQLAlchemy model for the ``account_pool_accounts`` table.
+
+    One subscription account inside a pool. The row stores a *path* to a
+    credential home directory — never a token, password, or key.
+
+    :param id: Account id, unique per workspace, e.g. ``"codex-acc1"``.
+    :param pool_id: Id of the pool that owns the account.
+    :param home_path: Absolute path to the credential home directory.
+    :param home_kind: Which credential home the path is — ``"codex_home"``,
+        ``"gemini_dir"``, or ``"generic"``.
+    :param enabled: Whether the account may be selected for a new session.
+    :param metadata: Opaque non-secret annotations as a JSON object, or
+        ``NULL`` when none are stored.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last write, or ``None``.
+    """
+
+    __tablename__ = "account_pool_accounts"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    pool_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    home_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    home_kind: Mapped[str] = mapped_column(String(32), nullable=False, server_default="generic")
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    # Opaque non-secret annotations (JSON object). Never SQL-queried, so a new
+    # key needs no schema change; stored compressed. The Python attribute is
+    # renamed because ``metadata`` is reserved on a declarative class.
+    metadata_json: Mapped[str | None] = mapped_column("metadata", CompressedText, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        # The pool's accounts are always read together, in id order.
+        Index("ix_account_pool_accounts_pool", "workspace_id", "pool_id", "id"),
+    )
+
+
+class SqlAccountQuotaSnapshot(OmnigentBase):
+    """
+    SQLAlchemy model for the ``account_quota_snapshots`` table.
+
+    The last observed quota of one account, for one model family. The
+    snapshot has its own write cadence: the probe writes it, and the
+    selection path reads the latest row. A snapshot older than
+    ``QUOTA_FRESHNESS_SECONDS`` reads as unknown.
+
+    :param id: Snapshot key, ``"<account id>:<model family>"``.
+    :param account_id: The account the snapshot describes.
+    :param model_family: The model family the snapshot belongs to, e.g.
+        ``"gemini"`` or ``"claude"``.
+    :param status: Overall status — ``"known"``, ``"unknown"``,
+        ``"blocked"``, ``"exhausted"``, ``"probe_error"``, or
+        ``"auth_failed"``.
+    :param five_hour_remaining_pct: Remaining five-hour percentage, or
+        ``None``.
+    :param weekly_remaining_pct: Remaining weekly percentage, or ``None``.
+    :param five_hour_reset_at: Reported five-hour reset time, or ``None``.
+    :param weekly_reset_at: Reported weekly reset time, or ``None``.
+    :param observed_at: Unix epoch seconds of the observation.
+    """
+
+    __tablename__ = "account_quota_snapshots"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_family: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="unknown")
+    five_hour_remaining_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weekly_remaining_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    five_hour_reset_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    weekly_reset_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    observed_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        # The selection path reads the latest snapshot per account and family.
+        Index(
+            "ix_account_quota_snapshots_account",
+            "workspace_id",
+            "account_id",
+            "model_family",
         ),
     )

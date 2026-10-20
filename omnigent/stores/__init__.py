@@ -1,5 +1,6 @@
 """Abstract store interfaces shared across runtime and server layers."""
 
+from omnigent.stores.account_pool_store import AccountPoolStore
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.conversation_store import ConversationStore
@@ -9,6 +10,7 @@ from omnigent.stores.project_store import ProjectStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
 
 __all__ = [
+    "AccountPoolStore",
     "AgentStore",
     "ArtifactStore",
     "ConversationStore",

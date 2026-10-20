@@ -24,6 +24,7 @@ import {
 import { Label } from "@/components/scheduled/Label";
 import { ScheduleFields } from "@/components/scheduled/ScheduleFields";
 import { ModelEffortFields } from "@/components/scheduled/ModelEffortFields";
+import { AccountSelect } from "@/components/composer/AccountSelect";
 import { WorkspacePickerDialog } from "@/shell/WorkspacePickerDialog";
 import { AgentHarnessPicker } from "@/shell/NewChatDialog";
 import { useAvailableAgents, type AvailableAgent } from "@/hooks/useAvailableAgents";
@@ -109,6 +110,9 @@ export function CreateScheduledTaskDialog({
   const [pickedModel, setPickedModel] = useState<string>("");
   const [pickedEffort, setPickedEffort] = useState<string>("");
   const [pickedPermission, setPickedPermission] = useState<string>("");
+  // The subscription account every firing runs under. "" = the server picks
+  // one from the harness's account pool at fire time.
+  const [pickedAccountId, setPickedAccountId] = useState<string>(editingTask?.accountId ?? "");
 
   const agentList = useMemo(() => selectableSessionAgents(agents ?? []), [agents]);
   const harnessEntries = useMemo(
@@ -152,6 +156,9 @@ export function CreateScheduledTaskDialog({
     setPickedModel(backToOriginal ? (editingTask?.modelOverride ?? "") : "");
     setPickedEffort(backToOriginal ? (editingTask?.reasoningEffort ?? "") : "");
     setPickedPermission(backToOriginal ? (editingTask?.permissionMode ?? "") : "");
+    // The account belongs to a harness's pool, so a switch drops the pin —
+    // mirroring the server's clear on a rebind.
+    setPickedAccountId(backToOriginal ? (editingTask?.accountId ?? "") : "");
   }
 
   // Model + effort are surfaced for Claude Code (permissionMode capability)
@@ -350,11 +357,19 @@ export function CreateScheduledTaskDialog({
                 : {}),
             }
           : {};
+        // The account pin is independent of the model/effort surface: send it
+        // only when it changed, so an unrelated edit never clears a stored pin.
+        const storedAccountId = editingTask?.accountId ?? "";
+        const accountOverride =
+          pickedAccountId === storedAccountId
+            ? {}
+            : { accountId: pickedAccountId === "" ? null : pickedAccountId };
         await updateMutation.mutateAsync({
           id: editingTask.id,
           input: {
             ...input,
             ...overrides,
+            ...accountOverride,
             // Only on a real switch: sending the unchanged agent is a server-side
             // no-op, but omitting it keeps the PATCH honest about what changed.
             ...(agentChanged && effectiveAgentId !== null ? { agentId: effectiveAgentId } : {}),
@@ -373,6 +388,7 @@ export function CreateScheduledTaskDialog({
           ...(showPermissionMode && pickedPermission !== ""
             ? { permissionMode: pickedPermission }
             : {}),
+          ...(pickedAccountId !== "" ? { accountId: pickedAccountId } : {}),
         });
       }
       handleOpenChange(false);
@@ -514,6 +530,15 @@ export function CreateScheduledTaskDialog({
                 onPermissionModeChange={setPickedPermission}
                 onSelectOpenChange={handleSelectOpenChange}
               />
+              <div className="mt-3">
+                <AccountSelect
+                  harness={modelEffortHarness}
+                  value={pickedAccountId || null}
+                  onChange={(accountId) => setPickedAccountId(accountId ?? "")}
+                  testId="scheduled-task-account"
+                  label="Account"
+                />
+              </div>
               <p className="mt-1.5 text-sm text-muted-foreground">
                 Leave on Default to use the agent&apos;s configured model
                 {showPermissionMode ? ", effort, and permission mode" : " and effort"}. Automations

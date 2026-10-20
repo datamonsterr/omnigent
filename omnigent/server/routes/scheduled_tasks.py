@@ -68,6 +68,9 @@ class CreateScheduledTaskRequest(BaseModel):
     # Native-harness permission mode (Claude Code), e.g. "acceptEdits". The fire
     # path derives the runner's --permission-mode launch arg from it.
     permission_mode: str | None = None
+    # The subscription account every firing runs under. None = the server
+    # picks one from the harness's account pool at fire time.
+    account_id: str | None = None
     max_cost_usd: float | None = Field(default=None, gt=0)
     # Optional: no PINNED host/workspace. When both are unset the fire path
     # resolves the owner's online host at fire time and defaults the workspace to
@@ -109,6 +112,8 @@ class UpdateScheduledTaskRequest(BaseModel):
     model_override: str | None = None
     reasoning_effort: str | None = None
     permission_mode: str | None = None
+    # The subscription account every firing runs under. None clears the pin.
+    account_id: str | None = None
     max_cost_usd: float | None = Field(default=None, gt=0)  # null clears the cap
     workspace: str | None = Field(default=None, min_length=1)
     host_id: str | None = Field(default=None, min_length=1)
@@ -169,6 +174,7 @@ def _to_response(
         "model_override": task.model_override,
         "reasoning_effort": task.reasoning_effort,
         "permission_mode": task.permission_mode,
+        "account_id": task.account_id,
         "max_cost_usd": task.max_cost_usd,
         "workspace": task.workspace,
         "host_id": task.host_id,
@@ -398,6 +404,7 @@ def create_scheduled_tasks_router(
                 model_override=model_override,
                 reasoning_effort=reasoning_effort,
                 permission_mode=permission_mode,
+                account_id=body.account_id,
                 max_cost_usd=body.max_cost_usd,
                 workspace=workspace,
                 host_id=body.host_id,
@@ -574,7 +581,7 @@ def create_scheduled_tasks_router(
             # it: a model id is provider-bound and permission_mode is Claude-only.
             # Clear whichever the caller did not resend so a switched task never
             # fires the new harness with the old one's flags.
-            for stale in ("model_override", "reasoning_effort", "permission_mode"):
+            for stale in ("model_override", "reasoning_effort", "permission_mode", "account_id"):
                 fields.setdefault(stale, None)
         if {"model_override", "reasoning_effort"}.intersection(fields):
             model_override, reasoning_effort = validate_session_model_metadata(

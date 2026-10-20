@@ -11649,37 +11649,20 @@ async def _create_session_from_existing_agent(
     if body.host_type == "managed" and body.requested_host_id is not None:
         initial_labels[REQUESTED_HOST_ID_LABEL_KEY] = body.requested_host_id
 
-    # Account pool assignment (optional declarative pool or spec-level pool)
-    from omnigent.account_pools.manager import AccountPoolExhaustedError
+    # Account assignment: the pool inventory lives in the account pool store,
+    # so the manager reads it per call and a runtime account change lands on
+    # the next session create.
+    from omnigent.account_pools.labels import ACCOUNT_ID_LABEL_KEY
+    from omnigent.account_pools.manager import (
+        AccountPoolExhaustedError,
+        await_session_account_visible,
+    )
 
     reservation_handle = None
-    account_pool_mgr = None
     spec_for_env = sub_spec or own_spec or selection_spec
     try:
         app_state = getattr(getattr(request, "app", None), "state", None)
         account_pool_mgr = getattr(app_state, "account_pool_manager", None)
-        if account_pool_mgr is None:
-            from omnigent.runtime import get_caps
-
-            caps = get_caps()
-            if caps and getattr(caps, "account_pools", None):
-                from omnigent.account_pools.manager import AccountPoolManager
-
-                account_pool_mgr = AccountPoolManager(config=caps.account_pools)
-                if app_state is not None:
-                    app_state.account_pool_manager = account_pool_mgr
-
-        if account_pool_mgr is None and spec_for_env is not None:
-            exec_cfg = getattr(spec_for_env.executor, "config", None)
-            if isinstance(exec_cfg, dict) and "account_pools" in exec_cfg:
-                from omnigent.account_pools.manager import AccountPoolManager
-                from omnigent.account_pools.models import parse_account_pools
-
-                spec_pools = parse_account_pools(exec_cfg["account_pools"])
-                if spec_pools:
-                    account_pool_mgr = AccountPoolManager(config=spec_pools)
-                    if app_state is not None:
-                        app_state.account_pool_manager = account_pool_mgr
 
         if account_pool_mgr is not None:
             from omnigent.account_pools.manager import prepare_session_account
@@ -11689,7 +11672,6 @@ async def _create_session_from_existing_agent(
                 initial_labels=initial_labels,
                 harness=selected_harness,
                 sub_agent_name=body.sub_agent_name,
-                agent_spec=spec_for_env,
                 manager=account_pool_mgr,
                 conversation_store=conversation_store,
                 model=model_override
@@ -11755,6 +11737,17 @@ async def _create_session_from_existing_agent(
                 **snapshot_kwargs,
             )
         if reservation_handle is not None and account_pool_mgr is not None:
+            # Hand the launch reservation to the persisted startup-window
+            # count: only release it once the new session's row is visible
+            # to the counter. Releasing earlier opens a window where a
+            # concurrent create sees neither the reservation nor the row
+            # and picks the same account twice.
+            await asyncio.to_thread(
+                await_session_account_visible,
+                conversation_store,
+                conv.id,
+                initial_labels.get(ACCOUNT_ID_LABEL_KEY),
+            )
             account_pool_mgr.reservation_tracker.release(reservation_handle)
             reservation_handle = None
     except NameAlreadyExistsError as exc:

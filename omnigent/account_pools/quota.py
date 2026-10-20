@@ -12,50 +12,36 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from omnigent.account_pools.models import AccountConfig
+from omnigent.entities.account_pool import AccountQuota, AccountQuotaWindow
 
-
-@dataclass
-class WindowQuota:
-    """Quota window metrics for a period (5h or weekly)."""
-
-    remaining_pct: float | None = None
-    status: str = "unknown"  # "known", "unknown", "blocked", "exhausted", "unreported"
-    reset_at: float | str | None = None
+#: The quota window of one period. Alias of the entity class, kept so the
+#: probe code and the store speak about the same type.
+WindowQuota = AccountQuotaWindow
 
 
 @dataclass
-class AccountQuota:
-    """Subscription quota state for an account."""
+class QuotaTarget:
+    """The credential homes a quota probe may read.
 
-    five_hour: WindowQuota = field(default_factory=lambda: WindowQuota(status="unknown"))
-    weekly: WindowQuota = field(default_factory=lambda: WindowQuota(status="unknown"))
-    status: str = (
-        "unknown"  # "known", "unknown", "blocked", "exhausted", "probe_error", "auth_failed"
-    )
-    observed_at: float | None = None
+    An account row stores one credential home path; this target spells out
+    which provider home it is, so the probe knows which protocol to speak.
 
-    def is_known(self) -> bool:
-        return self.status == "known" and (
-            self.five_hour.remaining_pct is not None or self.weekly.remaining_pct is not None
-        )
+    :param id: The account id the quota belongs to.
+    :param codex_home: The Codex credential home, or ``None``.
+    :param gemini_dir: The Antigravity credential home, or ``None``.
+    :param command: Override for the provider CLI, or ``None`` to resolve
+        it from ``PATH``.
+    :param metadata: Non-secret annotations — ``quota_family`` selects the
+        Antigravity model family, ``quota_cache`` an explicit cache path.
+    """
 
-    def is_exhausted(self) -> bool:
-        if self.status in ("blocked", "exhausted", "auth_failed"):
-            return True
-        if self.five_hour.status in ("blocked", "exhausted") or self.weekly.status in (
-            "blocked",
-            "exhausted",
-        ):
-            return True
-        if self.five_hour.remaining_pct is not None and self.five_hour.remaining_pct <= 0:
-            return True
-        if self.weekly.remaining_pct is not None and self.weekly.remaining_pct <= 0:
-            return True
-        return False
+    id: str
+    codex_home: str | None = None
+    gemini_dir: str | None = None
+    command: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def parse_codex_rate_limits(result: dict[str, Any]) -> AccountQuota:
@@ -68,7 +54,7 @@ def parse_codex_rate_limits(result: dict[str, Any]) -> AccountQuota:
         five_hour=WindowQuota(status="unknown"),
         weekly=WindowQuota(status="unknown"),
         status="unknown",
-        observed_at=time.time(),
+        observed_at=int(time.time()),
     )
     if not isinstance(result, dict):
         return quota
@@ -132,7 +118,7 @@ def parse_agy_quota(
         five_hour=WindowQuota(status="unknown"),
         weekly=WindowQuota(status="unknown"),
         status="unknown",
-        observed_at=time.time(),
+        observed_at=int(time.time()),
     )
     if not isinstance(data, dict):
         return quota
@@ -300,7 +286,7 @@ def probe_agy_quota(
                 if not isinstance(accounts, dict):
                     continue
                 quota = parse_agy_quota(accounts, account_id=account_id, family=family)
-                quota.observed_at = observed
+                quota.observed_at = int(observed)
                 return quota
             except (OSError, ValueError, TypeError):
                 continue
@@ -317,10 +303,10 @@ def clear_quota_cache() -> None:
 
 def get_default_quota_provider(
     cache_ttl_seconds: float = 60.0,
-) -> Callable[[str, AccountConfig], AccountQuota]:
+) -> Callable[[str, QuotaTarget], AccountQuota]:
     """Return an inference-free cached quota provider function."""
 
-    def _provider(account_id: str, account: AccountConfig) -> AccountQuota:
+    def _provider(account_id: str, account: QuotaTarget) -> AccountQuota:
         now = time.monotonic()
         cache_key = (
             account_id,
@@ -357,3 +343,23 @@ def get_default_quota_provider(
         return res
 
     return _provider
+
+
+def quota_target_for(account: Any) -> QuotaTarget:
+    """Build the probe target for a stored account.
+
+    :param account: An :class:`~omnigent.entities.account_pool.AccountPoolAccount`.
+    :returns: The target describing which credential home to read.
+    """
+    home_kind = getattr(account, "home_kind", "") or ""
+    home_path = getattr(account, "home_path", "") or ""
+    metadata = dict(getattr(account, "metadata", {}) or {})
+    codex_home = home_path if home_kind == "codex_home" else None
+    gemini_dir = home_path if home_kind == "gemini_dir" else None
+    return QuotaTarget(
+        id=getattr(account, "id", ""),
+        codex_home=codex_home,
+        gemini_dir=gemini_dir,
+        command=metadata.get("command"),
+        metadata=metadata,
+    )

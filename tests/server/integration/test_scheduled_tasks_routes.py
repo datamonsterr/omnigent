@@ -379,6 +379,31 @@ async def test_create_persists_permission_mode(
     assert got.json()["permission_mode"] == "acceptEdits"
 
 
+async def test_create_persists_account_pin(auth_client: httpx.AsyncClient, db_uri: str) -> None:
+    """A task keeps the account its firings run under."""
+    _make_user(db_uri)
+    resp = await auth_client.post(
+        "/v1/scheduled-tasks",
+        json=_create_body(account_id="codex-acc1"),
+        headers=_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    created = resp.json()
+    assert created["account_id"] == "codex-acc1"
+
+    got = await auth_client.get(f"/v1/scheduled-tasks/{created['id']}", headers=_headers())
+    assert got.status_code == 200
+    assert got.json()["account_id"] == "codex-acc1"
+
+    cleared = await auth_client.patch(
+        f"/v1/scheduled-tasks/{created['id']}",
+        json={"account_id": None},
+        headers=_headers(),
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["account_id"] is None
+
+
 @pytest.mark.parametrize("permission_mode", ["yolo", "--danger", "Auto"])
 async def test_create_rejects_invalid_permission_mode(
     auth_client: httpx.AsyncClient, db_uri: str, permission_mode: str

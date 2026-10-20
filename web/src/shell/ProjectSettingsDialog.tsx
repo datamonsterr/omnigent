@@ -50,6 +50,7 @@ import {
 import type { ProjectConfig } from "@/lib/projectsApi";
 import { shouldGuardDialogDismiss } from "@/lib/dialogDismissGuard";
 import { AgentHarnessPicker } from "./NewChatDialog";
+import { AccountSelect } from "@/components/composer/AccountSelect";
 import { WorkspacePickerDialog } from "./WorkspacePickerDialog";
 
 /** Select sentinel for "no default" — Radix Select can't hold an empty value. */
@@ -140,6 +141,9 @@ export function ProjectSettingsDialog({
   // Default model for new sessions, only meaningful when the default agent is
   // a native harness with a model choice; NONE stores no default (unset key).
   const [model, setModel] = useState<string>(NONE);
+  // Default account for new sessions; NONE stores no default (the server
+  // picks one from the harness's account pool).
+  const [accountId, setAccountId] = useState<string>(NONE);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
 
   // The agent picker and the host Select portal their dropdowns OUTSIDE
@@ -190,6 +194,7 @@ export function ProjectSettingsDialog({
     setBaseBranch(c.base_branch ?? "");
     setAgentId(c.agent_id ?? null);
     setModel(c.model ?? NONE);
+    setAccountId(c.account_id ?? NONE);
     setWorkspaceOpen(false);
   }, [open, stored, loadFailed]);
 
@@ -232,6 +237,10 @@ export function ProjectSettingsDialog({
     const agentUnresolved = agentId != null && selectedAgent === null;
     if (supportsModelDefault && model !== NONE) config.model = model;
     else if (!agentUnresolved) delete config.model;
+    // The account default belongs to the default agent's harness, so it is
+    // dropped with the agent (same rule as the model default).
+    if (accountId !== NONE) config.account_id = accountId;
+    else if (!agentUnresolved) delete config.account_id;
 
     updateConfig.mutate(
       { id: projectId, name: projectName, config },
@@ -543,6 +552,18 @@ export function ProjectSettingsDialog({
               </Select>
             </Field>
           )}
+
+          <Field
+            label="Account"
+            hint="Default subscription account for new sessions with this agent"
+          >
+            <AccountSelect
+              harness={selectedNativeSpec?.harness ?? null}
+              value={accountId === NONE ? null : accountId}
+              onChange={(next) => setAccountId(next ?? NONE)}
+              testId="project-settings-account"
+            />
+          </Field>
 
           {loadFailed && (
             <p

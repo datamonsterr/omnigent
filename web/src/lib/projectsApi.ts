@@ -26,6 +26,11 @@ export interface ProjectConfig {
   workspace?: string;
   /** Default agent id for new sessions. */
   agent_id?: string;
+  /**
+   * Default subscription account for new sessions, e.g. ``"codex-acc1"``.
+   * Unset → the server picks an account from the harness's pool.
+   */
+  account_id?: string;
   /** Chosen emoji icon (a unicode grapheme, e.g. "🔥"). Unset → default folder. */
   icon?: string;
   /**

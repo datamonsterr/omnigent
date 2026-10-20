@@ -1,103 +1,162 @@
-# ADR 0001: Native Multi-Account Pools and Polly Dispatch Integration
+# ADR 0001: Native Multi-Account Pools (database-backed)
 
 ## Status
 Accepted
 
 ## Context
-Omnigent agent workflows frequently use multiple sub-agent harnesses (Codex, Antigravity, OpenCode, Claude) and benefit from distributing workload across multiple subscription accounts.
-Historically, credential and harness routing was attempted through an external metaharness (`jev_router_omniagent_mcp`). However:
-1. Native Omnigent smart routing is disabled in this environment (`external: false`, `oss: false`).
-2. Existing subscription provider aliases do not pick credentials or handle multi-account home environments.
-3. Polly native session spawn (`sys_session_send`) provides first-class model and harness routing within the core runtime, eliminating the need for an external dispatch process.
 
-This change introduces native multi-account pools directly into Omnigent's session orchestration without modifying smart routing or requiring schema migrations.
+Omnigent agent workflows frequently use multiple sub-agent harnesses (Codex,
+Antigravity, OpenCode, Claude) and benefit from distributing workload across
+multiple subscription accounts. A deployment may hold five Codex accounts and
+five Antigravity accounts, each with its own credential home, its own quota
+window, and its own share of the machine's running sessions.
 
-## Decisions
-
-### 1. Account Pools Configuration
-Account pools are defined in the server configuration (`account_pools` at the top level of the file supplied to `omnigent server --config`). Agent executor config values are strings in the native loader; nested pool mappings there are not supported.
+The first implementation of this feature (fork-only, `omnigent/account_pools/`)
+kept the inventory in a server config block:
 
 ```yaml
 account_pools:
-  codex:
-    - id: codex-account-primary
-      codex_home: /var/accounts/codex-1
-    - id: codex-account-secondary
-      codex_home: /var/accounts/codex-2
-  antigravity:
-    - id: agy-account-alpha
-      gemini_dir: /var/accounts/agy-alpha/.gemini
-    - id: agy-account-beta
-      gemini_dir: /var/accounts/agy-beta/.gemini
+  codex-native:
+    accounts:
+      - id: codex-acc1
+        codex_home: /home/user/.codex
 ```
 
-- **Harness Mapping**: The pool is identified by harness family (`codex`, `antigravity`, or their native harness names).
-- **Credential Hygiene**: Pools store local directory pointers (`codex_home`, `gemini_dir`) or credential references. Raw tokens or secrets are never stored in pool configs, conversation labels, or logs.
+That worked for the selection algorithm, but it made the inventory
+operationally invisible: adding an account meant editing a YAML file and
+restarting the server, the same list had to be mirrored into
+`~/.omnigent/config.yaml` as `providers:` entries (two sources of truth that
+drift), and nothing in the API surface exposed accounts — so the web UI, the
+mobile clients, and the orchestrating agent could not see or choose one.
 
-### 2. Selection Algorithm
-Account selection executes strictly at session creation time:
-1. **Explicit Pin First**: Explicit account IDs and native `codex_home`/`gemini_dir` paths pin identity. A known ID and conflicting home are rejected; a home absent from the pool remains unchanged without an invented ID. Existing sessions are never reassigned.
-2. **Fewest Active Sessions**: Select the account with the minimum number of active sessions (sum of DB active sessions and pending in-flight reservations).
-   - Active DB states: `running` and `waiting` require a fresh runner heartbeat. New never-reported/pending launches count for 120 seconds after creation; idle/failed/stale sessions do not count. Existing home-only sessions are matched to configured account paths.
-   - Excluded DB states: `idle`, `stopped`, `disconnected`, `closed`, `failed`, `completed`, `archived`, or stale heartbeat.
-3. **Known Quota Preference**: On identical active session counts, accounts with known remaining quota are selected before unknown accounts (unknown is not assumed unlimited). Accounts with explicitly exhausted quota or authentication errors are skipped.
-4. **Most Remaining Subscription Quota**: Among accounts with known quota, pick by greatest primary remaining quota (5h rolling window), then secondary quota (weekly window).
-5. **Deterministic Stable Tie-Break**: Lexicographical order of `account.id`.
+The inventory is operational state: it has identity, a credential home, a
+quota, and a usage history. It belongs in the database next to the other
+server-owned state, behind the same store/route/UI pattern the rest of
+Omnigent uses.
 
-### 3. Concurrency and Reservation Lifecycle
-To prevent race conditions during concurrent session spawns:
-- One manager per server process serializes count, rank, and reservation acquisition before DB persistence.
-- The reservation transfers to the persisted startup-window count as soon as the conversation record exists (or releases on failure). Multi-process/server-replica reservation coordination is not supported by this in-memory patch.
-- If session creation fails or errors out, the reservation is released immediately.
+## Decisions
 
-### 4. Runner Environment Forwarding
-The selected account's environment paths are injected into session labels:
-- Codex: `omnigent.codex.codex_home`
-- Antigravity: `omnigent.antigravity.gemini_dir`
-The existing native runner infrastructure forwards these labels to the spawned harness process.
+### 1. Account Pools Live in the Database
 
-### 5. Architectural Non-Goals
+Three new tables (Alembic revision `mn1a2b3c4d5e`):
+
+- `account_pools` — a named group of accounts that serves one harness family
+  (`id`, `name`, `harness`, `description`).
+- `account_pool_accounts` — one account: `id`, `pool_id`, `home_path`,
+  `home_kind`, `enabled`.
+- `account_quota_snapshots` — the last observed quota per account and model
+  family, with its observation time.
+
+An account row stores a *path* to a credential home (`codex_home`,
+`gemini_dir`), never a token, password, or key. The `account_pool_store`
+module follows the existing store pattern (abstract interface in
+`omnigent/stores/account_pool_store/__init__.py`, SQLAlchemy implementation
+beside it), scoped by the ambient workspace id like every other table.
+
+### 2. The YAML Block Is Removed, With an Explicit Import Path
+
+Keeping both a YAML block and database rows would leave two sources of truth —
+the drift this change exists to remove. The `account_pools:` key is no longer
+read: the server logs a startup warning naming the import command, and the
+command converts a legacy block into rows.
+
+`omnigent accounts import --config <file>` is idempotent (an account that
+already exists with the same id, home path, and enabled flag is left
+untouched), reports what it created and skipped, and drops any secret-looking
+key from a legacy entry.
+
+`omnigent accounts add` creates one account, and `scripts/setup_accounts.py`
+provisions a whole spec file (pools created as needed, home paths verified).
+
+### 3. Selection Algorithm Is Unchanged
+
+Selection still runs at session creation and keeps its ranking:
+
+1. **Explicit pin first** — the session's `omnigent.account.id` label (or a
+   scheduled task's `account_id`) pins the account. A known id with a
+   conflicting home is rejected.
+2. **Fewest active sessions** — running and waiting sessions with a fresh
+   runner heartbeat, plus pending launch reservations.
+3. **Known quota before unknown quota** on equal session counts.
+4. **Most remaining subscription quota** — five-hour window first, weekly
+   second.
+5. **Deterministic tie-break** — the account id lexicographically.
+
+Accounts with exhausted or blocked quota are skipped, and a pool with no
+eligible account fails the create instead of silently running unassigned.
+The in-process reservation tracker is kept; cross-process coordination is not
+supported. The reservation is released only after the new session's row is
+verifiably readable by the counter (read-your-write): releasing it earlier
+opens a window where a concurrent create sees neither the reservation nor the
+row and picks the same account twice. A fresh store snapshot (under 120
+seconds old) is used without probing, and the accounts of one pool are
+probed concurrently, so a session create does not pay a probe per account.
+
+### 4. Quota Is a Snapshot Table, Written by the Probe
+
+Quota is a per-observation fact with its own freshness window (a snapshot
+older than 120 seconds reads as unknown), so it gets its own table rather
+than columns on the account. Codex accounts are probed through the official
+`account/rateLimits/read` app-server RPC; Antigravity accounts read the local
+quota JSON under the account's `gemini_dir`. A missing probe, an unsupported
+provider, or a probe error leaves the quota unknown — no quota is inferred
+from local attempts.
+
+### 5. Clients Choose an Account; the Server Still Decides by Default
+
+Every picker that offers a harness also offers an account for that harness
+(new-chat landing, scheduled task, project settings). `Auto` is the default
+and leaves the pick to the server. A chosen account rides the existing
+`omnigent.account.id` label on session create, and the scheduled-task path
+persists its pin in the new `scheduled_tasks.account_id` column.
+
+The account inventory and its usage are rendered in a new Settings › Accounts
+section, which is also where accounts are created, edited, disabled, and
+removed.
+
+### 6. Architectural Non-Goals
+
 - No background rebalance daemon.
 - No failover or retry scheduler.
-- No dynamic model routing changes (native smart routing remains untouched).
-- No database migrations (uses existing `conversation_labels` and `live_status`).
-- No UI alterations.
-
-### 6. Quota inspection and limits
-Codex uses the official `account/rateLimits/read` app-server RPC with a bounded timeout and no inference. Antigravity reads fresh local quota JSON only: `<gemini_dir>/quota.json`, `<gemini_dir>/cache/quota.json`, or an explicit account `quota_cache` path. A cache is a mapping of account IDs to `gemini:five_hour`/`gemini:weekly` and `claude:five_hour`/`claude:weekly` remaining percentages, optionally wrapped as `{"ts": <epoch>, "accounts": {...}}`. It must be refreshed externally; this patch does not run an Antigravity quota polling daemon. Snapshots older than 120 seconds are unknown. The selected model family determines which quota applies. Missing probes/cache, unsupported providers (including OpenCode), and probe errors remain unknown; no quota is inferred from local attempts. In-memory probe results expire after 60 seconds and distinguish account paths and model families.
+- No cross-process reservation coordination.
+- No credential storage — only credential home paths.
+- No model-routing changes; smart routing picks the harness, the pool picks
+  the account.
 
 ## Upgrade & Compatibility
-- **Fork Baseline**: Developed on `datamonsterr/omnigent` against commit `4173ab3d` to preserve existing user patches.
-- **Future Omnigent Upgrade**: Reconcile future upstream versions in an isolated checkout, porting only the required account changes and running the native harness regression suites before switching the runtime. This patch does not upgrade the current customized installation.
+
+- **Fork Baseline**: developed on `datamonsterr/omnigent`. The account-pool
+  feature stays fork-local until it is upstreamed.
+- **Migration**: run `omnigent accounts import --config <server.yaml>` against
+  the deployment, confirm the pool list matches, then remove the
+  `account_pools:` key from the config file. The import writes rows only, so
+  dropping the tables and restoring the YAML block returns the deployment to
+  the previous behaviour.
 
 ## Verification & Manual Testing Steps
 
 ### 1. Automated Verification
-Run the unit and integration suites:
+
 ```bash
-pytest tests/test_account_pools.py tests/server/integration/test_account_pools_integration.py -v
+pytest tests/test_account_pools.py tests/test_account_pools_import.py \
+       tests/test_setup_accounts_script.py tests/stores/test_account_pool_store.py \
+       tests/server/test_account_pools_routes.py \
+       tests/server/integration/test_account_pools_integration.py \
+       tests/db/test_migration_account_pools.py -v
 ```
 
 ### 2. Manual Verification
-1. Start the server with account pools defined in `server_config.yaml`:
+
+1. Import the legacy block and list the accounts:
    ```bash
-   omnigent server --config server_config.yaml
+   omnigent accounts import --config ~/.config/omnigent/server.yaml
+   omnigent accounts list
    ```
-2. Spawn a session targeting the `codex` harness family:
-   ```bash
-   curl -X POST http://localhost:8080/v1/sessions \
-     -H "Content-Type: application/json" \
-     -d '{"agent_id": "<agent_id>", "title": "Codex Test 1", "harness_override": "codex-native"}'
-   ```
-3. Inspect the returned JSON labels:
-   - `omnigent.account.id` is assigned (e.g. `codex-account-primary`).
-   - `omnigent.codex.codex_home` points to `/var/accounts/codex-1`.
-4. Spawn a concurrent or active second session:
-   - Confirm it selects `codex-account-secondary` due to the active session count on `codex-account-primary`.
-5. Spawn a session with explicit account pin:
-   ```bash
-   curl -X POST http://localhost:8080/v1/sessions \
-     -H "Content-Type: application/json" \
-     -d '{"agent_id": "<agent_id>", "title": "Pinned Test", "harness_override": "codex-native", "labels": {"omnigent.account.id": "codex-account-primary"}}'
-   ```
-   - Confirm `omnigent.account.id` remains `codex-account-primary`.
+2. Start the server and open **Settings › Accounts**: the pools, their
+   accounts, the quota windows, and the per-account usage are listed.
+3. Start a session from the new-chat landing, open the harness config flyout,
+   and pick an account. The created session's labels carry
+   `omnigent.account.id` and the matching credential home.
+4. Leave the account on `Auto` and start two sessions for the same harness:
+   they land on different accounts, because the second one sees the first as
+   active.

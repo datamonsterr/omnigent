@@ -118,6 +118,7 @@ import {
 } from "@/lib/databricksIntegration";
 import { getCurrentIsAdmin, resolveIdentity } from "@/lib/identity";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
+import { accountPoolsEnabled } from "@/lib/capabilities";
 import { useOmnigentAnalytics, useOmnigentPageView } from "@/lib/analytics";
 import {
   type Conversation,
@@ -261,6 +262,7 @@ import {
   readBackgroundSessionTitlesEnabled,
   writeBackgroundSessionTitlesEnabled,
 } from "@/lib/backgroundSessionTitlesPreferences";
+import { SettingsAccountsSection } from "./settings/SettingsAccountsSection";
 import { SettingsHarnessesSection } from "./settings/SettingsHarnessesSection";
 import { SettingsCustomAgentsSection } from "./settings/SettingsCustomAgentsSection";
 
@@ -337,6 +339,7 @@ export function SettingsPage() {
     >
       {section === "appearance" && <AppearanceSection />}
       {section === "general" && <GeneralSection />}
+      {section === "accounts" && accountPoolsEnabled(info) && <SettingsAccountsSection />}
       {section === "harnesses" && <SettingsHarnessesSection />}
       {section === "custom-agents" && <SettingsCustomAgentsSection />}
       {section === "git" && <GitSection />}

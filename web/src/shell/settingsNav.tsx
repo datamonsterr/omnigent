@@ -14,6 +14,7 @@ import {
   BotIcon,
   DownloadIcon,
   GitBranchIcon,
+  KeyRoundIcon,
   KeyboardIcon,
   PaletteIcon,
   PlugIcon,
@@ -28,7 +29,11 @@ import {
 import { Link, useLocation } from "@/lib/routing";
 import { Button } from "@/components/ui/button";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
-import { customAgentsSettingsEnabled, isSingleUserMode } from "@/lib/capabilities";
+import {
+  accountPoolsEnabled,
+  customAgentsSettingsEnabled,
+  isSingleUserMode,
+} from "@/lib/capabilities";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
@@ -36,6 +41,7 @@ import { SIDEBAR_ROW } from "./sidebarStyles";
 
 export type SettingsSectionId =
   | "appearance"
+  | "accounts"
   | "harnesses"
   | "custom-agents"
   | "general"
@@ -54,6 +60,7 @@ export type SettingsSectionId =
 
 const SECTION_IDS: readonly SettingsSectionId[] = [
   "appearance",
+  "accounts",
   "harnesses",
   "custom-agents",
   "general",
@@ -101,6 +108,7 @@ export function settingsNavGroups(
   integrationsEnabled = false,
   customAgentsEnabled = false,
   mcpEnabled = false,
+  accountsEnabled = false,
 ): SettingsNavGroup[] {
   const harnesses: SettingsNavItem = {
     id: "harnesses",
@@ -125,6 +133,11 @@ export function settingsNavGroups(
   }
   if (mcpEnabled) {
     general.splice(2, 0, { id: "mcp", label: "MCP", icon: PlugIcon });
+  }
+  // The harness account inventory. Only on a server that keeps one — the
+  // section would otherwise be an empty page.
+  if (accountsEnabled) {
+    general.splice(2, 0, { id: "accounts", label: "Accounts", icon: KeyRoundIcon });
   }
   if (hasAuthSession) {
     // Account leads the group when present — it's the most-visited section
@@ -266,6 +279,7 @@ export function SettingsSidebarBody({
     integrationsEnabled,
     customAgentsSettingsEnabled(info),
     mcpEnabled,
+    accountPoolsEnabled(info),
   );
 
   return (

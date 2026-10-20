@@ -28,6 +28,7 @@ import {
   PickerSectionHeader,
 } from "@/components/composer/HarnessMenuRow";
 import { ComposerConfigSections } from "@/components/composer/ComposerConfigSections";
+import { useAccountConfigSection } from "@/components/composer/AccountConfigSection";
 import { buildFusionSections } from "@/components/composer/fusionSections";
 import {
   compactModelTriggerLabel,
@@ -181,6 +182,8 @@ import {
   resolveHarnessPreference,
   writeLastHarness,
 } from "@/lib/harnessPreferences";
+import { readLastAccount, writeLastAccount } from "@/lib/accountPreferences";
+import { ACCOUNT_ID_LABEL } from "@/lib/accountPoolsApi";
 import { readHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
 import { readDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import { readAlwaysUseWorktree } from "@/lib/worktreeDefaultPreferences";
@@ -2191,6 +2194,7 @@ export function NewChatLandingScreen() {
       agentId: c.agent_id,
       useWorktree: c.use_worktree,
       model: c.model,
+      accountId: c.account_id,
     };
   }, [
     projectParam,
@@ -2591,6 +2595,12 @@ export function NewChatLandingScreen() {
   // An explicit pick rides along and is remembered (seeded back on a later visit
   // via the harness-seed effect below).
   const [pickedModel, _setPickedModel] = useState<string>(() => restoredDraft?.pickedModel ?? "");
+  // The subscription account this session runs under. null = the server picks
+  // one by its ranking (fewest active sessions, then most remaining quota).
+  // The pick is per harness; `pickedAccountHarness` records which harness the
+  // current pick belongs to, so a harness switch reseeds it.
+  const [pickedAccountId, setPickedAccountId] = useState<string | null>(null);
+  const [pickedAccountHarness, setPickedAccountHarness] = useState<string | null>(null);
   const [pickedEffort, setPickedEffort] = useState<string>(() => restoredDraft?.pickedEffort ?? "");
   const [pickerEdits, setPickerEdits] = useState<{
     agentId: string | null;
@@ -3107,6 +3117,36 @@ export function NewChatLandingScreen() {
   // The selected native harness persists and restores harness-specific model,
   // effort, and permission knobs.
   const selectedNativeHarness = nativeCodingAgentForAvailableAgent(selectedAgent)?.harness ?? null;
+  // A harness switch reseeds the account pick from the last account used for
+  // that harness, so the picker opens on the account that harness last ran on.
+  useEffect(() => {
+    if (pickedAccountHarness === selectedNativeHarness) return;
+    setPickedAccountHarness(selectedNativeHarness);
+    setPickedAccountId(readLastAccount(selectedNativeHarness));
+  }, [selectedNativeHarness, pickedAccountHarness]);
+  const selectAccount = useCallback(
+    (accountId: string | null) => {
+      setPickedAccountId(accountId);
+      setPickedAccountHarness(selectedNativeHarness);
+      writeLastAccount(selectedNativeHarness, accountId);
+    },
+    [selectedNativeHarness],
+  );
+  // A project's stored account default seeds the pick, so a session started in
+  // that project runs under the account the project pins.
+  useEffect(() => {
+    const configured = prefillConfig?.accountId;
+    if (!configured) return;
+    if (pickedAccountHarness !== null && pickedAccountId !== null) return;
+    setPickedAccountId(configured);
+    setPickedAccountHarness(selectedNativeHarness);
+  }, [prefillConfig?.accountId, pickedAccountHarness, pickedAccountId, selectedNativeHarness]);
+  const accountSection = useAccountConfigSection({
+    harness: selectedNativeHarness,
+    selectedAccountId: pickedAccountId,
+    onSelect: selectAccount,
+    testId: "new-chat-landing-agent-account",
+  });
   // Probe only the selected, available harness. Older hosts without readiness
   // metadata remain eligible, matching the picker's setup warnings.
   const canLoadHostModels = (harness: string) =>
@@ -4093,16 +4133,17 @@ export function NewChatLandingScreen() {
                 }
               : undefined
           }
-          extra={
-            pickerFusion !== undefined && fusionSelected && !routingOn
+          extra={[
+            ...(pickerFusion !== undefined && fusionSelected && !routingOn
               ? buildFusionSections({
                   descriptor: pickerFusion,
                   modelUid: fusionModelUid,
                   testIdPrefix: "new-chat-landing-agent",
                   onChange: selectFusionModel,
                 })
-              : undefined
-          }
+              : []),
+            ...(accountSection ? [accountSection] : []),
+          ]}
         />
       </>
     ) : null;
@@ -5698,8 +5739,15 @@ export function NewChatLandingScreen() {
               ...(baseLabels ?? {}),
               [PROJECT_LABEL_KEY]: selectedProject,
               ...composerContextLabels,
+              // The account the user pinned; the server falls back to its own
+              // ranking when this label is absent.
+              ...(pickedAccountId ? { [ACCOUNT_ID_LABEL]: pickedAccountId } : {}),
             }
-          : { ...(baseLabels ?? {}), ...composerContextLabels };
+          : {
+              ...(baseLabels ?? {}),
+              ...composerContextLabels,
+              ...(pickedAccountId ? { [ACCOUNT_ID_LABEL]: pickedAccountId } : {}),
+            };
 
       let data: { id: string };
 

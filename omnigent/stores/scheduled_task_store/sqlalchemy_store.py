@@ -58,6 +58,7 @@ def _to_entity(row: SqlScheduledTask) -> ScheduledTask:
         model_override=row.model_override,
         reasoning_effort=row.reasoning_effort,
         permission_mode=row.permission_mode,
+        account_id=row.account_id,
         max_cost_usd=row.max_cost_usd,
         workspace=row.workspace,
         base_branch=row.base_branch,
@@ -139,6 +140,7 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
         model_override: str | None = None,
         reasoning_effort: str | None = None,
         permission_mode: str | None = None,
+        account_id: str | None = None,
         max_cost_usd: float | None = None,
         workspace: str | None = None,
         host_id: str | None = None,
@@ -162,6 +164,7 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
                 model_override=model_override,
                 reasoning_effort=reasoning_effort,
                 permission_mode=permission_mode,
+                account_id=account_id,
                 max_cost_usd=max_cost_usd,
                 workspace=workspace,
                 base_branch=None,
@@ -270,6 +273,7 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
         model_override: str | None = _UNSET,
         reasoning_effort: str | None = _UNSET,
         permission_mode: str | None = _UNSET,
+        account_id: str | None = _UNSET,
         max_cost_usd: float | None = _UNSET,
         workspace: str | None = _UNSET,
         host_id: str | None = _UNSET,
@@ -325,6 +329,8 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
                 changed = True
             if permission_mode is not _UNSET and row.permission_mode != permission_mode:
                 row.permission_mode = permission_mode
+            if account_id is not _UNSET and row.account_id != account_id:
+                row.account_id = account_id
                 changed = True
             if max_cost_usd is not _UNSET and row.max_cost_usd != max_cost_usd:
                 row.max_cost_usd = max_cost_usd

@@ -40,6 +40,9 @@ from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server import _elicitation_registry, presence
 from omnigent.server.app import create_app
 from omnigent.server.routes import sessions as sessions_routes
+from omnigent.stores.account_pool_store.sqlalchemy_store import (
+    SqlAlchemyAccountPoolStore,
+)
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.comment_store.sqlalchemy_store import SqlAlchemyCommentStore
@@ -630,6 +633,7 @@ def app(runtime_init: None, db_uri: str, tmp_path: Path) -> FastAPI:
             cache_dir=tmp_path / "cache",
         ),
         comment_store=SqlAlchemyCommentStore(db_uri),
+        account_pool_store=SqlAlchemyAccountPoolStore(db_uri),
     )
 
 

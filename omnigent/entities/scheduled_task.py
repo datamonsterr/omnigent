@@ -45,6 +45,9 @@ class ScheduledTask:
         ``"claude-opus-4-7"``. ``None`` means use the agent default.
     :param reasoning_effort: Per-task reasoning-effort hint, e.g. ``"high"``.
         ``None`` means use the agent default.
+    :param account_id: The subscription account every firing runs under, e.g.
+        ``"codex-acc1"``. ``None`` means the server picks one from the
+        harness's account pool at fire time.
     :param permission_mode: Per-task permission mode for native coding harnesses
         that support one (currently Claude Code), e.g. ``"acceptEdits"`` or
         ``"bypassPermissions"``. The fire path turns it into the runner's
@@ -85,6 +88,9 @@ class ScheduledTask:
     model_override: str | None = None
     reasoning_effort: str | None = None
     permission_mode: str | None = None
+    #: The subscription account every firing runs under. ``None`` means the
+    #: server picks one from the harness's account pool at fire time.
+    account_id: str | None = None
     max_cost_usd: float | None = None
     workspace: str | None = None
     base_branch: str | None = None

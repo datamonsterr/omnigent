@@ -175,6 +175,13 @@ export interface ServerInfo {
    */
   smart_routing_sources: SmartRoutingSources;
   /**
+   * True when the server keeps a harness account inventory (database-backed
+   * account pools). Absent on older servers, which clients treat as "no
+   * account picker" — the account row and the Accounts settings section stay
+   * hidden.
+   */
+  account_pools_enabled?: boolean;
+  /**
    * Deployment-wide release features. Missing keys are disabled. The map is
    * the canonical gate for new frontend surfaces.
    */
@@ -282,6 +289,7 @@ export const FALLBACK_SERVER_INFO: ServerInfo = {
   server_version: null,
   smart_routing_enabled: false,
   smart_routing_sources: { external: false, oss: false },
+  account_pools_enabled: false,
   features: {},
   harness_install_enabled: false,
   installable_harnesses: [],
@@ -392,6 +400,7 @@ export async function resolveServerInfo(): Promise<ServerInfo> {
             data.smart_routing_sources,
             smartRoutingEnabled,
           ),
+          account_pools_enabled: data.account_pools_enabled === true,
           features: parseFeatures(data.features, harnessInstallEnabled),
           harness_install_enabled: harnessInstallEnabled,
           installable_harnesses: Array.isArray(data.installable_harnesses)
@@ -438,6 +447,17 @@ export function getCachedServerInfo(): ServerInfo | null {
  * multi-user, so it must keep its account/sharing chrome. Returns ``false``
  * while the probe is still loading (and on the failed-probe sentinel).
  */
+/**
+ * True when the server keeps a harness account inventory.
+ *
+ * Gates the account row in the harness pickers and the Accounts settings
+ * section. A server that predates the field reports no inventory, so both
+ * stay hidden rather than offering a picker the server would ignore.
+ */
+export function accountPoolsEnabled(info: ServerInfo | "loading"): boolean {
+  return info !== "loading" && info.account_pools_enabled === true;
+}
+
 export function isSingleUserMode(info: ServerInfo | "loading"): boolean {
   return info !== "loading" && info.single_user;
 }

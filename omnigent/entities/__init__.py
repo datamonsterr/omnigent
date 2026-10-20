@@ -1,6 +1,13 @@
 """Core domain entities shared across runtime, server, and store layers."""
 
 from omnigent.entities.account import Account, AccountToken
+from omnigent.entities.account_pool import (
+    AccountPool,
+    AccountPoolAccount,
+    AccountQuota,
+    AccountQuotaWindow,
+    AccountUsage,
+)
 from omnigent.entities.agent import Agent, LoadedAgent
 from omnigent.entities.comment import Comment, CommentsFingerprint
 from omnigent.entities.connection import ProviderConnection
@@ -49,7 +56,12 @@ __all__ = [
     "NON_CONTENT_ITEM_TYPES",
     "USER_SESSION_TITLE_MAX_CHARS",
     "Account",
+    "AccountPool",
+    "AccountPoolAccount",
+    "AccountQuota",
+    "AccountQuotaWindow",
     "AccountToken",
+    "AccountUsage",
     "Agent",
     "Comment",
     "CommentsFingerprint",

@@ -1,27 +1,34 @@
-"""Account pool selection and reservation manager."""
+"""Account pool selection and reservation manager.
+
+The manager answers one question at session-create time: *which account of
+the pool that serves this harness should this session run under?* The pool
+data comes from the account pool store, so the inventory is durable and
+editable at runtime; the ranking is unchanged from the configuration-driven
+implementation it replaces.
+"""
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
-from omnigent.account_pools.models import (
+from omnigent.account_pools.labels import (
+    ACCOUNT_HOME_LABEL_KEYS,
     ACCOUNT_ID_LABEL_KEY,
     ACCOUNT_POOL_LABEL_KEY,
     CODEX_HOME_LABEL_KEY,
     GEMINI_DIR_LABEL_KEY,
-    AccountConfig,
-    AccountPool,
-    AccountPoolsConfig,
+    LEGACY_ACCOUNT_ID_LABEL_KEY,
 )
-from omnigent.account_pools.quota import AccountQuota
-
-if TYPE_CHECKING:
-    from omnigent.stores.conversation_store import ConversationStore
+from omnigent.account_pools.quota import AccountQuota, QuotaTarget, quota_target_for
+from omnigent.entities.account_pool import AccountPool, AccountPoolAccount
 
 
 class AccountPoolExhaustedError(Exception):
@@ -29,7 +36,7 @@ class AccountPoolExhaustedError(Exception):
 
 
 class AccountNotFoundError(Exception):
-    """Raised when an explicit pinned account cannot be found in pool."""
+    """Raised when an explicitly pinned account cannot be found in pool."""
 
 
 @dataclass
@@ -44,6 +51,7 @@ class ReservationHandle:
 
     @property
     def is_expired(self) -> bool:
+        """Whether the reservation is older than its TTL."""
         return time.monotonic() - self.created_at > self.ttl_seconds
 
 
@@ -51,6 +59,11 @@ class AccountReservationTracker:
     """Thread-safe and asyncio-safe reservation tracker for pending launches."""
 
     def __init__(self, default_ttl_seconds: float = 60.0) -> None:
+        """
+        Initialize the reservation tracker.
+
+        :param default_ttl_seconds: How long a reservation stays held.
+        """
         self._default_ttl = default_ttl_seconds
         self._lock = threading.Lock()
         self._reservations: dict[str, ReservationHandle] = {}
@@ -66,6 +79,14 @@ class AccountReservationTracker:
     def reserve(
         self, account_id: str, pool_name: str, reservation_id: str | None = None
     ) -> ReservationHandle:
+        """
+        Hold a reservation for an account.
+
+        :param account_id: The account being reserved.
+        :param pool_name: The pool the account belongs to.
+        :param reservation_id: Optional explicit reservation id.
+        :returns: The reservation handle.
+        """
         with self._lock:
             self._prune_expired_locked()
             rid = reservation_id or str(uuid.uuid4())
@@ -80,6 +101,12 @@ class AccountReservationTracker:
             return handle
 
     def release(self, handle_or_id: ReservationHandle | str) -> bool:
+        """
+        Drop a reservation.
+
+        :param handle_or_id: The handle or its id.
+        :returns: ``True`` when a reservation was dropped.
+        """
         rid = (
             handle_or_id.reservation_id
             if isinstance(handle_or_id, ReservationHandle)
@@ -89,26 +116,51 @@ class AccountReservationTracker:
             return self._reservations.pop(rid, None) is not None
 
     def count_pending(self, account_id: str) -> int:
+        """
+        Count the pending reservations held for an account.
+
+        :param account_id: The account to count.
+        :returns: The number of live reservations.
+        """
         with self._lock:
             self._prune_expired_locked()
             return sum(1 for h in self._reservations.values() if h.account_id == account_id)
 
     def clear(self) -> None:
+        """Drop every reservation."""
         with self._lock:
             self._reservations.clear()
 
 
 class AccountPoolManager:
-    """Manages account selection, active counting, and environment forwarding."""
+    """Selects the account a session runs under.
+
+    The manager holds no inventory of its own: pools and accounts come from
+    the store on every call, so an account added or removed at runtime takes
+    effect on the next session create.
+    """
 
     def __init__(
         self,
-        config: AccountPoolsConfig | None = None,
+        store: Any,
+        conversation_store: Any | None = None,
         reservation_tracker: AccountReservationTracker | None = None,
-        quota_provider: Callable[[str, AccountConfig], AccountQuota] | None = None,
+        quota_provider: Callable[[str, QuotaTarget], AccountQuota] | None = None,
     ) -> None:
+        """
+        Initialize the manager.
+
+        :param store: The account pool store to read pools and accounts from.
+        :param conversation_store: The conversation store, used to count the
+            sessions an account is already serving.
+        :param reservation_tracker: The reservation tracker, or ``None`` for
+            a fresh one.
+        :param quota_provider: The quota probe, or ``None`` for the default
+            inference-free probes.
+        """
         self._selection_lock = threading.RLock()
-        self.config = config or AccountPoolsConfig()
+        self.store = store
+        self.conversation_store = conversation_store
         self.reservation_tracker = reservation_tracker or AccountReservationTracker()
         if quota_provider is None:
             from omnigent.account_pools.quota import get_default_quota_provider
@@ -117,15 +169,24 @@ class AccountPoolManager:
         else:
             self.quota_provider = quota_provider
 
-    def count_active_sessions(
-        self,
-        conversation_store: ConversationStore | None,
-        account_id: str,
-    ) -> int:
-        """Count active sessions (running, waiting, pending) for this account in DB."""
+    def count_active_sessions(self, account_id: str) -> int:
+        """Count the active sessions running on an account.
+
+        :param account_id: The account to count for.
+        :returns: The number of active sessions, or ``0`` when the count
+            cannot be established.
+        """
+        conversation_store = self.conversation_store
         if conversation_store is None:
             return 0
         from omnigent.stores.conversation_store import runner_seen_is_fresh
+
+        account = self.store.get_account(account_id)
+        homes = (
+            (CODEX_HOME_LABEL_KEY, account.home_path)
+            if account is not None and account.home_path
+            else (None, None)
+        )
 
         count = 0
         now = int(time.time())
@@ -136,24 +197,12 @@ class AccountPoolManager:
             )
             for conv in page.data:
                 labels = conv.labels or {}
-                identity = labels.get(ACCOUNT_ID_LABEL_KEY) or labels.get("account_id")
-                if identity is None:
-                    found = self.config.find_account(account_id)
-                    if found is not None:
-                        account, _ = found
-                        from pathlib import Path
-
-                        for key, home in (
-                            (CODEX_HOME_LABEL_KEY, account.codex_home),
-                            (GEMINI_DIR_LABEL_KEY, account.gemini_dir),
-                        ):
-                            if (
-                                home is not None
-                                and labels.get(key)
-                                and Path(labels[key]).expanduser().resolve() == home
-                            ):
-                                identity = account_id
-                                break
+                identity = labels.get(ACCOUNT_ID_LABEL_KEY) or labels.get(
+                    LEGACY_ACCOUNT_ID_LABEL_KEY
+                )
+                if identity is None and homes[0] is not None and labels.get(homes[0]):
+                    if Path(labels[homes[0]]).expanduser().resolve() == Path(homes[1]).resolve():
+                        identity = account_id
                 if identity != account_id:
                     continue
                 if conv.archived:
@@ -170,52 +219,102 @@ class AccountPoolManager:
                 raise RuntimeError("Conversation pagination did not advance")
             after = page.last_id
 
-    def get_quota(self, account: AccountConfig, model: str | None = None) -> AccountQuota:
-        if self.quota_provider is not None:
-            if account.gemini_dir is not None:
-                model_name = (model or "").lower()
-                family = (
-                    "claude"
-                    if "claude" in model_name
-                    else "gemini"
-                    if "gemini" in model_name
-                    else None
-                )
-                account = replace(account, metadata={**account.metadata, "quota_family": family})
-            try:
-                return self.quota_provider(account.id, account)
-            except Exception:  # noqa: BLE001 - fallback to default unknown quota on provider failure
-                return AccountQuota()
-        return AccountQuota()
+    def get_quota(
+        self,
+        account: AccountPoolAccount,
+        model: str | None = None,
+        *,
+        probe: bool = True,
+    ) -> AccountQuota:
+        """Read the last known quota of an account.
+
+        A fresh snapshot in the store is used as-is, so a session create does
+        not pay for a probe on every call. When there is no fresh snapshot the
+        account is probed (unless ``probe`` is off) and the result is written
+        back to the store, so the clients can show it too.
+
+        :param account: The account to read.
+        :param model: The model the session would run, used to pick the
+            Antigravity quota family.
+        :param probe: Whether to probe when no fresh snapshot exists.
+        :returns: The account's quota; unknown when the probe fails.
+        """
+        target = quota_target_for(account)
+        family: str | None = None
+        if target.gemini_dir is not None:
+            model_name = (model or "").lower()
+            family = (
+                "claude"
+                if "claude" in model_name
+                else "gemini"
+                if "gemini" in model_name
+                else None
+            )
+            target.metadata = {**target.metadata, "quota_family": family}
+        # The snapshot is per account AND model family: an Antigravity account
+        # reports a different quota for Gemini than for Claude.
+        stored = self.store.get_quota_snapshot(account.id, family)
+        if stored is not None and stored.is_fresh(int(time.time())):
+            return stored
+        if not probe:
+            return stored if stored is not None else AccountQuota()
+        try:
+            quota = self.quota_provider(account.id, target)
+        except Exception:  # noqa: BLE001 - a failed probe leaves the quota unknown
+            quota = AccountQuota()
+        if not quota.observed_at:
+            quota.observed_at = int(time.time())
+        if quota.model_family is None:
+            quota.model_family = target.metadata.get("quota_family") or "default"
+        # A snapshot write never blocks selection.
+        with contextlib.suppress(Exception):
+            self.store.save_quota_snapshot(account.id, quota)
+        return quota
 
     def select_account(
         self,
         pool: AccountPool,
-        conversation_store: ConversationStore | None = None,
         model: str | None = None,
-    ) -> tuple[AccountConfig, ReservationHandle]:
-        """
-        Select account by fewest active sessions, then quota, then ID tie-break.
+    ) -> tuple[AccountPoolAccount, ReservationHandle]:
+        """Select the account a session should run under.
 
-        1. Fewest active sessions (including pending launch reservations).
-        2. Known quota before unknown quota on same session count.
-        3. Most remaining subscription quota (5h primary, weekly secondary).
-        4. Stable account ID tie-break.
+        The ranking is: fewest active sessions (including pending launch
+        reservations), then known quota before unknown quota, then greatest
+        remaining five-hour quota, then greatest remaining weekly quota, then
+        the account id.
+
+        :param pool: The pool to select from.
+        :param model: The model the session would run, used to pick the
+            quota family.
+        :returns: The chosen account and its reservation handle.
+        :raises AccountPoolExhaustedError: when no account is eligible.
         """
-        quotas = {account.id: self.get_quota(account, model=model) for account in pool.accounts}
+        accounts = [account for account in pool.accounts if account.enabled]
+        # The probes run in parallel: each one can take a couple of seconds
+        # (a Codex app-server round trip), and a pool holds several accounts.
+        quotas: dict[str, AccountQuota] = {}
+        if accounts:
+            with ThreadPoolExecutor(max_workers=min(len(accounts), 8)) as pool_executor:
+                results = list(
+                    pool_executor.map(
+                        lambda account: self.get_quota(account, model=model),
+                        accounts,
+                    )
+                )
+            quotas = {account.id: quota for account, quota in zip(accounts, results, strict=True)}
         with self._selection_lock:
-            if not pool.accounts:
+            if not accounts:
                 raise AccountPoolExhaustedError(
-                    f"Account pool {pool.name!r} has no configured accounts"
+                    f"Account pool {pool.name!r} has no enabled accounts"
                 )
 
-            eligible: list[tuple[Any, AccountConfig]] = []
-            for account in pool.accounts:
+            eligible: list[tuple[Any, AccountPoolAccount]] = []
+            for account in accounts:
                 quota = quotas[account.id]
                 if quota.is_exhausted():
                     continue
 
-                active_db = self.count_active_sessions(conversation_store, account.id)
+                active_db = self.count_active_sessions(account.id)
                 pending = self.reservation_tracker.count_pending(account.id)
                 total_active = active_db + pending
 
@@ -251,72 +350,121 @@ class AccountPoolManager:
             return chosen, handle
 
 
+def _home_for_account(account: AccountPoolAccount) -> str | None:
+    """Return the credential home path an account carries.
+
+    :param account: The account to read.
+    :returns: The home path, or ``None`` when the account has none.
+    """
+    return account.home_path or None
+
+
+def await_session_account_visible(
+    conversation_store: Any,
+    conversation_id: str,
+    account_id: str | None,
+    timeout_seconds: float = 5.0,
+) -> bool:
+    """Wait until a new session's row is visible to the account counter.
+
+    The counter reads the session's labels, so a reservation must not be
+    released until the row *and* its account label are readable — otherwise
+    a concurrent create can miss both the reservation and the row and pick
+    the same account twice.
+
+    :param conversation_store: The conversation store to read from.
+    :param conversation_id: The new session's id.
+    :param account_id: The account id the session was assigned, or ``None``
+        when the session runs unassigned.
+    :param timeout_seconds: How long to wait before giving up.
+    :returns: ``True`` when the row became visible in time.
+    """
+    if conversation_store is None or not account_id:
+        return False
+    deadline = time.monotonic() + max(timeout_seconds, 0.0)
+    while time.monotonic() < deadline:
+        try:
+            conv = conversation_store.get_conversation(conversation_id)
+        except Exception:  # noqa: BLE001 - a read error is a miss, not a failure
+            conv = None
+        if conv is not None and (conv.labels or {}).get(ACCOUNT_ID_LABEL_KEY) == account_id:
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def prepare_session_account(
     initial_labels: dict[str, str],
     harness: str | None,
     sub_agent_name: str | None,
-    agent_spec: Any | None,
     manager: AccountPoolManager,
-    conversation_store: ConversationStore | None = None,
+    conversation_store: Any | None = None,
     model: str | None = None,
 ) -> ReservationHandle | None:
+    """Assign the account a new session runs under.
+
+    An explicit pin always wins. Otherwise the pool that serves the
+    session's harness picks the account by the manager's ranking. The chosen
+    account's credential home is written onto the session labels, which is
+    how the runner learns which credential home to launch with.
+
+    :param initial_labels: The session's labels, updated in place.
+    :param harness: The session's harness, used to resolve the pool.
+    :param sub_agent_name: The sub-agent name, used to resolve the pool.
+    :param manager: The account pool manager.
+    :param conversation_store: The conversation store, when the manager has
+        none.
+    :param model: The model the session would run.
+    :returns: The reservation handle when an account was reserved, else
+        ``None``.
+    :raises ValueError: when a pinned account conflicts with a pinned home.
+    :raises AccountPoolExhaustedError: when the pool has no eligible account.
     """
-    Prepare and forward account assignment for a session create.
+    if conversation_store is not None and manager.conversation_store is None:
+        manager.conversation_store = conversation_store
 
-    Honors explicit account pins always.
-    Selects best account if unpinned and pool is available.
-    Forwards codex_home and gemini_dir into initial_labels.
-    Returns ReservationHandle if a reservation was acquired, else None.
-    """
-    pinned_id = initial_labels.get(ACCOUNT_ID_LABEL_KEY) or initial_labels.get("account_id")
-
-    # Check for agent-spec declared account_pools
-    cfg = manager.config
-    if agent_spec is not None:
-        exec_cfg = getattr(getattr(agent_spec, "executor", None), "config", None)
-        if isinstance(exec_cfg, dict) and "account_pools" in exec_cfg:
-            from omnigent.account_pools.models import parse_account_pools
-
-            spec_pools = parse_account_pools(exec_cfg["account_pools"])
-            if spec_pools:
-                cfg = spec_pools
-
-    pool = cfg.get_pool_for_harness_or_agent(harness=harness, agent_name=sub_agent_name)
+    pinned_id = initial_labels.get(ACCOUNT_ID_LABEL_KEY) or initial_labels.get(
+        LEGACY_ACCOUNT_ID_LABEL_KEY
+    )
+    pool = manager.store.get_pool_for_harness(harness) or manager.store.get_pool_by_name(
+        sub_agent_name or ""
+    )
 
     pinned_homes = {
-        key: initial_labels[key]
-        for key in (CODEX_HOME_LABEL_KEY, GEMINI_DIR_LABEL_KEY)
-        if initial_labels.get(key)
+        key: initial_labels[key] for key in ACCOUNT_HOME_LABEL_KEYS if initial_labels.get(key)
     }
 
-    def home_matches(account: AccountConfig) -> bool:
-        from pathlib import Path
-
+    def home_matches(account: AccountPoolAccount) -> bool:
         homes = {
-            CODEX_HOME_LABEL_KEY: account.codex_home,
-            GEMINI_DIR_LABEL_KEY: account.gemini_dir,
+            CODEX_HOME_LABEL_KEY: account.home_path if account.home_kind == "codex_home" else None,
+            GEMINI_DIR_LABEL_KEY: account.home_path if account.home_kind == "gemini_dir" else None,
         }
         return all(
-            homes[key] is not None and Path(value).expanduser().resolve() == homes[key]
+            homes[key] is not None
+            and Path(value).expanduser().resolve() == Path(str(homes[key])).resolve()
             for key, value in pinned_homes.items()
         )
 
     if pinned_id:
-        found = cfg.find_account(pinned_id)
-        if found is not None:
-            acc, pinned_pool = found
-            if pinned_homes and not home_matches(acc):
+        pinned_account = manager.store.get_account(pinned_id)
+        if pinned_account is not None:
+            if pinned_homes and not home_matches(pinned_account):
                 raise ValueError(f"Pinned account {pinned_id!r} conflicts with its account home")
-            if acc.codex_home:
-                initial_labels[CODEX_HOME_LABEL_KEY] = str(acc.codex_home)
-            if acc.gemini_dir:
-                initial_labels[GEMINI_DIR_LABEL_KEY] = str(acc.gemini_dir)
-            initial_labels[ACCOUNT_POOL_LABEL_KEY] = pinned_pool.name
+            home = _home_for_account(pinned_account)
+            if home:
+                if pinned_account.home_kind == "codex_home":
+                    initial_labels[CODEX_HOME_LABEL_KEY] = home
+                elif pinned_account.home_kind == "gemini_dir":
+                    initial_labels[GEMINI_DIR_LABEL_KEY] = home
+            pinned_pool = manager.store.get_pool(pinned_account.pool_id)
+            initial_labels[ACCOUNT_POOL_LABEL_KEY] = (
+                pinned_pool.name if pinned_pool is not None else pinned_account.pool_id
+            )
         initial_labels[ACCOUNT_ID_LABEL_KEY] = pinned_id
         return None
 
     if pinned_homes:
-        # An explicit native home already fixes identity, even without an account ID.
+        # An explicit native home already fixes identity, even without an account id.
         if pool is not None:
             matches = [acc for acc in pool.accounts if home_matches(acc)]
             if len(matches) == 1:
@@ -325,13 +473,13 @@ def prepare_session_account(
         return None
 
     if pool is not None and pool.accounts:
-        chosen, handle = manager.select_account(
-            pool, conversation_store=conversation_store, model=model
-        )
-        if chosen.codex_home and CODEX_HOME_LABEL_KEY not in initial_labels:
-            initial_labels[CODEX_HOME_LABEL_KEY] = str(chosen.codex_home)
-        if chosen.gemini_dir and GEMINI_DIR_LABEL_KEY not in initial_labels:
-            initial_labels[GEMINI_DIR_LABEL_KEY] = str(chosen.gemini_dir)
+        chosen, handle = manager.select_account(pool, model=model)
+        home = _home_for_account(chosen)
+        if home:
+            if chosen.home_kind == "codex_home":
+                initial_labels.setdefault(CODEX_HOME_LABEL_KEY, home)
+            elif chosen.home_kind == "gemini_dir":
+                initial_labels.setdefault(GEMINI_DIR_LABEL_KEY, home)
         initial_labels[ACCOUNT_ID_LABEL_KEY] = chosen.id
         initial_labels[ACCOUNT_POOL_LABEL_KEY] = pool.name
         return handle

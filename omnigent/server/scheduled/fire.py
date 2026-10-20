@@ -146,6 +146,11 @@ class FireDeps:
     # which case a ``managed_sandbox`` task records a failed run.
     sandbox_config: Any | None = None
     managed_launches: Any | None = None
+    # Account pool manager, used to resolve a task's pinned account (and its
+    # credential home) for a firing. ``None`` when the server keeps no
+    # account inventory, in which case every firing picks its account the
+    # ordinary way.
+    account_pool_manager: Any | None = None
     # ``app.state``, read per fire for the default-public-sessions policy.
     # ``None`` (tests, embedders) leaves every fired session private.
     app_state: Any | None = None
@@ -848,6 +853,51 @@ async def _agent_revision(deps: FireDeps, conv: Conversation) -> str | None:
     )
 
 
+async def _account_labels(deps: FireDeps, task: ScheduledTask) -> dict[str, str]:
+    """Resolve the account labels a fired session runs under.
+
+    A task may pin an account (``account_id``); otherwise the account comes
+    from the harness's pool by the same ranking the interactive create path
+    uses. The labels carry the account id and the credential home the runner
+    launches with.
+
+    Fail-safe: any resolution error omits the labels, so the firing falls
+    back to the harness default rather than failing the run.
+    """
+    manager = deps.account_pool_manager
+    if manager is None:
+        return {}
+    try:
+        from omnigent.account_pools.labels import ACCOUNT_ID_LABEL_KEY
+        from omnigent.account_pools.manager import prepare_session_account
+        from omnigent.native.native_coding_agents import native_coding_agent_for_agent_name
+
+        agent = await asyncio.to_thread(deps.agent_store.get, task.agent_id)
+        native = native_coding_agent_for_agent_name(agent.name) if agent is not None else None
+        harness = getattr(native, "harness", None) if native is not None else None
+        labels: dict[str, str] = {}
+        if task.account_id:
+            labels[ACCOUNT_ID_LABEL_KEY] = task.account_id
+        await asyncio.to_thread(
+            prepare_session_account,
+            labels,
+            harness,
+            agent.name if agent is not None else None,
+            manager,
+            deps.conversation_store,
+            None,
+        )
+        return labels
+    except Exception:  # noqa: BLE001 - a failed resolution never breaks the fire
+        _logger.warning(
+            "scheduled fire: could not resolve the account for task %s; "
+            "the session runs on the harness default",
+            task.id,
+            exc_info=True,
+        )
+        return {}
+
+
 async def _create_session(deps: FireDeps, task: ScheduledTask) -> Conversation:
     """Create a conversation bound to the task's agent, carrying the stored spec."""
     conv: Conversation = await asyncio.to_thread(
@@ -879,6 +929,11 @@ async def _create_session(deps: FireDeps, task: ScheduledTask) -> Conversation:
     if labels:
         await asyncio.to_thread(deps.conversation_store.set_labels, conv.id, labels)
         conv.labels.update(labels)
+    # The account the firing runs under: the task's pin, or the pool's pick.
+    account_labels = await _account_labels(deps, task)
+    if account_labels:
+        await asyncio.to_thread(deps.conversation_store.set_labels, conv.id, account_labels)
+        conv.labels.update(account_labels)
     return conv
 
 

@@ -25,6 +25,8 @@ export interface ProjectPrefillConfig {
    *  machine — the composer's harness-seed effect consumes it directly (it owns
    *  the model slot and would otherwise clobber a machine write). */
   model?: string;
+  /** Default account for new sessions; unset → the server picks one. */
+  accountId?: string;
 }
 
 export interface ProjectPrefillState {

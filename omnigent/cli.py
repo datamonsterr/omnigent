@@ -37,6 +37,7 @@ from rich.table import Table
 
 from omnigent._platform import IS_WINDOWS, resolve_repo_symlink
 from omnigent._startup_events import capture_cli_entry, record_startup_event
+from omnigent.cli_accounts import accounts_cli as _accounts_group
 from omnigent.cli_common import (
     RESUME_PICKER_SENTINEL as _RESUME_PICKER_SENTINEL,
 )
@@ -4448,6 +4449,9 @@ def server(
     # with "unable to open database file".
     _ensure_sqlite_parent_dir(db_uri)
 
+    from omnigent.stores.account_pool_store.sqlalchemy_store import (
+        SqlAlchemyAccountPoolStore,
+    )
     from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
     from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
     from omnigent.stores.scheduled_task_store.sqlalchemy_store import (
@@ -4462,6 +4466,7 @@ def server(
     permission_store = SqlAlchemyPermissionStore(db_uri)
     scheduled_task_store = SqlAlchemyScheduledTaskStore(db_uri)
     project_store = SqlAlchemyProjectStore(db_uri)
+    account_pool_store = SqlAlchemyAccountPoolStore(db_uri)
     artifact_store = _create_artifact_store(art_loc)
 
     # Initialize the runtime with store references so workflow code
@@ -4485,9 +4490,12 @@ def server(
     routing_settings = parse_routing_settings(cfg.get("routing"))
     routing_backends = _build_routing_backends(cfg, server_llm, routing_settings)
 
-    from omnigent.account_pools.models import parse_account_pools
-
-    account_pools = parse_account_pools(cfg.get("account_pools"))
+    if "account_pools" in cfg:
+        logging.getLogger(__name__).warning(
+            "The 'account_pools' server config key is no longer read. "
+            "Import the accounts with 'omnigent accounts import --config <file>' "
+            "and manage them from the Accounts settings section."
+        )
 
     caps = RuntimeCaps(
         execution_timeout=int(effective_timeout),
@@ -4498,7 +4506,6 @@ def server(
         routing_client=routing_backends.any(),
         routing_backends=routing_backends,
         routing_settings=routing_settings,
-        account_pools=account_pools,
     )
     init_runtime(
         conversation_store=conversation_store,
@@ -4667,6 +4674,7 @@ def server(
         permission_store=permission_store,
         scheduled_task_store=scheduled_task_store,
         project_store=project_store,
+        account_pool_store=account_pool_store,
         auth_provider=auth_provider,
         host_store=host_store,
         account_store=account_store,
@@ -11579,6 +11587,13 @@ if _sandbox_providers():
     cli.add_command(_sandbox_group)
     if "lakebox" in _sandbox_providers():
         cli.add_command(_lakebox_alias_group)
+
+# ─── accounts group ────────────────────────────────────────────────
+#
+# The harness subscription account inventory. It lives in the server
+# database, so the commands talk to the same rows the web UI and the
+# session-create path read.
+cli.add_command(_accounts_group)
 
 # ─── debug group ──────────────────────────────────────────────────
 #

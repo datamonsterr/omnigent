@@ -102,6 +102,7 @@ from omnigent.server.performance_metrics import (
     set_request_session_id_for_access_log,
     set_request_user_agent_for_access_log,
 )
+from omnigent.server.routes.account_pools import create_account_pools_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
@@ -140,6 +141,7 @@ from omnigent.stores import (
     ConversationStore,
     FileStore,
 )
+from omnigent.stores.account_pool_store import AccountPoolStore
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import (
     ConversationNotFoundError,
@@ -194,6 +196,9 @@ class ServerInfoResponse(BaseModel):
     server_version: str
     smart_routing_enabled: bool
     smart_routing_sources: SmartRoutingSourcesInfo
+    # The server keeps a harness account inventory (DB-backed pools). Absent on
+    # older servers, which clients treat as "no account picker".
+    account_pools_enabled: bool = False
     features: dict[str, bool]
     harness_install_enabled: bool
     installable_harnesses: list[str]
@@ -1330,6 +1335,7 @@ def create_app(
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
     project_store: ProjectStore | None = None,
+    account_pool_store: AccountPoolStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
@@ -1775,6 +1781,7 @@ def create_app(
                 # (before this lifespan runs), so it is already on state here.
                 sandbox_config=sandbox_config,
                 managed_launches=app_inst.state.managed_launches,
+                account_pool_manager=getattr(app_inst.state, "account_pool_manager", None),
                 app_state=app_inst.state,
             )
             on_fire = build_on_fire(fire_deps)
@@ -1920,16 +1927,27 @@ def create_app(
 
     host_registry.launch_authorizer = _admit_host_launch
     app.state.agent_store = agent_store
+    # The conversation store, so the account pool manager can count the
+    # sessions an account is already serving (and so a caller that needs it
+    # does not have to reach into the create path).
+    app.state.conversation_store = conversation_store
     app.state.sandbox_config = sandbox_config
     app.state.branding_snapshot = branding_snapshot
     app.state.feature_flags = resolved_feature_flags
     from omnigent.runtime import get_caps
 
     _caps = get_caps()
-    if _caps and getattr(_caps, "account_pools", None):
+    # The account pool manager reads its inventory from the store on every
+    # call, so an account added or removed at runtime takes effect on the
+    # next session create.
+    app.state.account_pool_store = account_pool_store
+    if account_pool_store is not None:
         from omnigent.account_pools.manager import AccountPoolManager
 
-        app.state.account_pool_manager = AccountPoolManager(config=_caps.account_pools)
+        app.state.account_pool_manager = AccountPoolManager(
+            store=account_pool_store,
+            conversation_store=conversation_store,
+        )
     # Deployment base path (e.g. "/proxy/6767"), so route handlers that build
     # a full-page redirect (not covered by BasePathMiddleware's inbound-only
     # strip) can prefix it themselves. "" for a root deployment.
@@ -3155,6 +3173,7 @@ def create_app(
                 "public_sharing_max_level": app.state.public_sharing_max_level().value,
                 "server_version": _server_version(),
                 "smart_routing_enabled": smart_routing_enabled,
+                "account_pools_enabled": account_pool_store is not None,
                 "smart_routing_sources": smart_routing_sources,
                 "features": app.state.feature_flags.frontend_dict(),
                 "harness_install_enabled": harness_install_enabled,
@@ -3478,6 +3497,18 @@ def create_app(
             ),
             prefix="/v1",
             tags=["projects"],
+        )
+    # Harness account pools — the subscription accounts a harness session can
+    # run under. Mounted only when an account pool store is wired.
+    if account_pool_store is not None:
+        app.include_router(
+            create_account_pools_router(
+                account_pool_store=account_pool_store,
+                conversation_store=conversation_store,
+                auth_provider=auth_provider,
+            ),
+            prefix="/v1",
+            tags=["account-pools"],
         )
 
     # ── Tunnel lifecycle callbacks (Step 8.5 crash recovery) ───

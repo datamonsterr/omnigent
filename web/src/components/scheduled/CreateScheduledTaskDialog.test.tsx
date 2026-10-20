@@ -17,6 +17,7 @@ import {
   isInsidePopper,
   shouldGuardDialogDismiss,
 } from "./CreateScheduledTaskDialog";
+import * as accountPoolsHook from "@/hooks/useAccountPools";
 import * as agentsHook from "@/hooks/useAvailableAgents";
 import * as hostsHook from "@/hooks/useHosts";
 import * as scheduledHooks from "@/hooks/useScheduledTasks";
@@ -32,6 +33,7 @@ vi.mock("@/hooks/useHosts", () => ({
   useHosts: vi.fn(),
   useHostModelOptions: vi.fn(() => ({ data: undefined })),
 }));
+vi.mock("@/hooks/useAccountPools", () => ({ useAccountPools: vi.fn() }));
 vi.mock("@/hooks/useScheduledTasks", () => ({
   useCreateScheduledTask: vi.fn(),
   useUpdateScheduledTask: vi.fn(),
@@ -149,6 +151,11 @@ beforeEach(() => {
   vi.mocked(agentsHook.useAvailableAgents).mockReturnValue({
     data: AGENTS,
   } as unknown as ReturnType<typeof agentsHook.useAvailableAgents>);
+  vi.mocked(accountPoolsHook.useAccountPools).mockReturnValue({
+    data: [],
+    isLoading: false,
+    error: null,
+  } as unknown as ReturnType<typeof accountPoolsHook.useAccountPools>);
   vi.mocked(hostsHook.useHosts).mockReturnValue({
     data: [{ host_id: "host_1", name: "laptop", owner: "me", status: "online" }],
   } as unknown as ReturnType<typeof hostsHook.useHosts>);
@@ -934,6 +941,59 @@ describe("CreateScheduledTaskDialog model + effort controls", () => {
     expect(input.modelOverride).toBeNull();
     expect(input.reasoningEffort).toBe("high");
     expect(input.permissionMode).toBe("plan");
+  });
+});
+
+describe("CreateScheduledTaskDialog account selection", () => {
+  const accountPools = [
+    {
+      id: "pool-claude",
+      object: "account_pool",
+      name: "claude",
+      harness: "claude-native",
+      description: null,
+      created_at: 1,
+      updated_at: null,
+      accounts: [
+        {
+          id: "claude-acc1",
+          object: "account",
+          pool_id: "pool-claude",
+          pool_name: "claude",
+          harness: "claude-native",
+          home_path: "/home/user/.claude-acc1",
+          home_kind: "generic",
+          enabled: true,
+          created_at: 1,
+          updated_at: null,
+          quota: null,
+          usage: { active_sessions: 0, sessions: 0, cost_usd: null, last_used_at: null },
+        },
+      ],
+    },
+  ];
+
+  it("sends the picked account id on create", async () => {
+    vi.mocked(accountPoolsHook.useAccountPools).mockReturnValue({
+      data: accountPools,
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof accountPoolsHook.useAccountPools>);
+    renderDialog();
+    fireEvent.change(screen.getByTestId("task-name-input"), { target: { value: "N" } });
+    fireEvent.change(screen.getByTestId("task-prompt-input"), { target: { value: "P" } });
+
+    fireEvent.keyDown(screen.getByTestId("scheduled-task-account"), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: /claude-acc1/ }));
+
+    fireEvent.click(screen.getByTestId("create-scheduled-task-submit"));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0].accountId).toBe("claude-acc1");
+  });
+
+  it("shows no account control for a harness without accounts", () => {
+    renderDialog();
+    expect(screen.queryByTestId("scheduled-task-account")).toBeNull();
   });
 });
 

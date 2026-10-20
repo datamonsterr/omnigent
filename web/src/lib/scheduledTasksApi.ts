@@ -51,6 +51,12 @@ export interface ScheduledTask {
    * `--permission-mode` launch arg from it at fire time.
    */
   permissionMode: string | null;
+  /**
+   * The subscription account every firing runs under, or `null` — the server
+   * then picks one from the harness's account pool. Optional so a task row
+   * from a server that predates the field still types.
+   */
+  accountId?: string | null;
   /** Pinned absolute workspace, or `null` (server defaults to the host home). */
   workspace: string | null;
   /** Pinned host, or `null` (server resolves the connected host at fire time). */
@@ -101,6 +107,8 @@ export interface CreateScheduledTaskInput {
   reasoningEffort?: string | null;
   /** Native-harness permission mode (Claude Code); omit for the agent default. */
   permissionMode?: string | null;
+  /** The account every firing runs under; omit for the server's own pick. */
+  accountId?: string | null;
   /** Optional pinned workspace; only valid together with `hostId`. */
   workspace?: string | null;
   /** Optional pinned host. */
@@ -133,6 +141,8 @@ export interface UpdateScheduledTaskInput {
   modelOverride?: string | null;
   reasoningEffort?: string | null;
   permissionMode?: string | null;
+  /** The account every firing runs under; `null` clears the pin. */
+  accountId?: string | null;
   workspace?: string;
   hostId?: string;
   /**
@@ -157,6 +167,8 @@ interface ScheduledTaskWire {
   model_override: string | null;
   reasoning_effort: string | null;
   permission_mode: string | null;
+  /** The account every firing runs under, or `null` (the server picks one). */
+  account_id: string | null;
   workspace: string | null;
   host_id: string | null;
   execution_target: ScheduledTaskExecutionTarget;
@@ -233,6 +245,7 @@ function taskFromWire(wire: ScheduledTaskWire): ScheduledTask {
     modelOverride: wire.model_override,
     reasoningEffort: wire.reasoning_effort,
     permissionMode: wire.permission_mode,
+    accountId: wire.account_id,
     workspace: wire.workspace,
     hostId: wire.host_id,
     executionTarget: wire.execution_target,
@@ -294,6 +307,7 @@ export async function createScheduledTask(input: CreateScheduledTaskInput): Prom
   if (input.modelOverride != null) body.model_override = input.modelOverride;
   if (input.reasoningEffort != null) body.reasoning_effort = input.reasoningEffort;
   if (input.permissionMode != null) body.permission_mode = input.permissionMode;
+  if (input.accountId != null) body.account_id = input.accountId;
   if (input.workspace != null) body.workspace = input.workspace;
   if (input.hostId != null) body.host_id = input.hostId;
   if (input.executionTarget !== undefined) body.execution_target = input.executionTarget;
@@ -323,6 +337,7 @@ export async function updateScheduledTask(
   if (input.modelOverride !== undefined) body.model_override = input.modelOverride;
   if (input.reasoningEffort !== undefined) body.reasoning_effort = input.reasoningEffort;
   if (input.permissionMode !== undefined) body.permission_mode = input.permissionMode;
+  if (input.accountId !== undefined) body.account_id = input.accountId;
   if (input.workspace !== undefined) body.workspace = input.workspace;
   if (input.hostId !== undefined) body.host_id = input.hostId;
   if (input.executionTarget !== undefined) body.execution_target = input.executionTarget;
