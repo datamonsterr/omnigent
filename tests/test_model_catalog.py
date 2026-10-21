@@ -1444,8 +1444,77 @@ def test_cursor_listing_failure_degrades_to_usable_static_row(
     assert "cannot run here" not in listing.note
 
 
-def test_none_listing_explains_dead_worker(
+def test_opencode_listing_falls_back_to_the_cli_catalog(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An opencode worker lists the models its own CLI advertises.
+
+    The platform has no model-provider entry for the OpenCode harness (it
+    authenticates against OpenCode's own catalog), so a missing resolution
+    must not read as "this worker cannot run here": the CLI's catalog — which
+    carries OpenCode's free models — is the worker's model truth.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :param tmp_path: Per-test temp dir.
+    """
+    from omnigent.harnesses.opencode_native import app_server as opencode_app_server
+    from omnigent.models.model_catalog import clear_model_catalog_cache
+
+    _isolate_config(monkeypatch, tmp_path, "")
+    clear_model_catalog_cache()
+    monkeypatch.setattr(
+        opencode_app_server,
+        "list_opencode_cli_model_options",
+        lambda: [
+            {
+                "id": "opencode/beam-free",
+                "model": "beam-free",
+                "providerID": "opencode",
+                "displayName": "opencode/beam-free",
+                "name": "beam-free",
+                "isDefault": False,
+            }
+        ],
+    )
+
+    listing = list_models_for_worker(_worker_spec("opencode-native"), "opencode-native")
+
+    assert listing.source == "cli"
+    assert listing.verified is True
+    assert [model.id for model in listing.models] == ["opencode/beam-free"]
+    assert "live models advertised" in listing.note
+    clear_model_catalog_cache()
+
+
+def test_opencode_listing_failure_keeps_the_no_provider_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed OpenCode CLI probe must not invent models for the worker.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :param tmp_path: Per-test temp dir.
+    """
+    from omnigent.harnesses.opencode_native import app_server as opencode_app_server
+    from omnigent.models.model_catalog import clear_model_catalog_cache
+
+    _isolate_config(monkeypatch, tmp_path, "")
+    clear_model_catalog_cache()
+
+    def fail() -> list[dict[str, object]]:
+        raise RuntimeError("opencode CLI not found on PATH")
+
+    monkeypatch.setattr(opencode_app_server, "list_opencode_cli_model_options", fail)
+
+    listing = list_models_for_worker(_worker_spec("opencode-native"), "opencode-native")
+
+    assert listing.source == "none"
+    assert listing.models == ()
+    clear_model_catalog_cache()
+
+
+def test_none_listing_explains_dead_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """An unresolvable provider yields an empty list with a preflight note.
 

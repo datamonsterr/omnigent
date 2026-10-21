@@ -85,6 +85,10 @@ _logger = logging.getLogger(__name__)
 # Sentinel kind for "no usable provider resolved" rows.
 NONE_KIND = "none"
 
+# The OpenCode CLI harness: it authenticates against OpenCode's own catalog
+# (its CLI login), so the platform has no model-provider entry for it.
+_OPENCODE_HARNESSES = frozenset({"opencode-native", "opencode"})
+
 # ~5 min: provider listings change rarely; a turn that fans out many
 # dispatches should never re-fetch per call.
 _CATALOG_TTL_S = 300.0
@@ -1145,6 +1149,15 @@ def list_models_for_worker(
                 listing = _listing_for_provider(provider, transport=transport)
     else:
         listing = _listing_for_provider(provider, transport=transport)
+        if provider.kind == NONE_KIND and _is_opencode_harness(harness):
+            # The platform has no model-provider entry for the OpenCode
+            # harness (it authenticates against OpenCode's own catalog), so a
+            # missing resolution must not read as "this worker cannot run
+            # here". The CLI's own catalog — which carries OpenCode's free
+            # models — is the worker's model truth.
+            cli_listing = _fetch_opencode_cli_listing()
+            if cli_listing is not None and cli_listing.models:
+                listing = cli_listing
     if harness is None:
         return listing
     from omnigent.inference_config import binding_for_harness, load_runtime_inference_config
@@ -1389,6 +1402,56 @@ def _listing_for_provider(
                 f"{_redacted_failure_reason(exc)}"
             ),
         )
+    with _listing_cache_lock:
+        _listing_cache[cache_key] = listing
+    return listing
+
+
+def _is_opencode_harness(harness: str | None) -> bool:
+    """Return whether *harness* names the OpenCode CLI harness.
+
+    :param harness: Harness id from the spec, e.g. ``"opencode-native"``.
+    :returns: ``True`` for the OpenCode harness and its aliases.
+    """
+    return (canonicalize_harness(harness) or "") in _OPENCODE_HARNESSES
+
+
+def _fetch_opencode_cli_listing() -> ModelListing | None:
+    """Build a live listing from the installed OpenCode CLI.
+
+    The OpenCode harness authenticates against OpenCode's own catalog (its CLI
+    login), so the platform has no provider entry for it and the CLI's catalog
+    is the worker's model truth. Probing it keeps a free OpenCode worker
+    usable when the platform's provider resolution is missing — e.g. when
+    every other provider is exhausted.
+
+    :returns: The CLI's listing, or ``None`` when the CLI cannot be probed.
+    """
+    cache_key = ("cli", "opencode")
+    with _listing_cache_lock:
+        cached = cast(ModelListing | None, _listing_cache.get(cache_key))
+    if cached is not None:
+        return cached
+    try:
+        from omnigent.harnesses.opencode_native.app_server import (
+            list_opencode_cli_model_options,
+        )
+
+        options = list_opencode_cli_model_options()
+    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+        # A missing CLI (or a failed catalog refresh) is an expected result:
+        # the caller keeps the platform's "no provider" row.
+        _logger.debug("OpenCode CLI model listing failed: %r", exc)
+        return None
+    listing = ModelListing(
+        source="cli",
+        verified=True,
+        models=tuple(
+            ModelEntry(id=str(option["id"]), family=model_family_token(str(option["id"])))
+            for option in options
+        ),
+        note="live models advertised by the opencode CLI",
+    )
     with _listing_cache_lock:
         _listing_cache[cache_key] = listing
     return listing
