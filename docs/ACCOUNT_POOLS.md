@@ -71,12 +71,48 @@ idempotent.
 ## How a session gets its account
 
 1. An explicit pin wins: the session carries `omnigent.account.id` (the
-   picker, a project default, or a scheduled task's `account_id`).
+   picker, a project default, a scheduled task's `account_id`, or a
+   per-dispatch `account`).
 2. Otherwise the pool that serves the session's harness ranks its enabled
    accounts: fewest active sessions, then known quota before unknown, then
    the most remaining five-hour and weekly quota, then the account id.
 3. Accounts with exhausted or blocked quota are skipped. A pool with no
    eligible account fails the create — a session never runs unassigned.
+
+## Per-dispatch accounts
+
+Orchestrators such as Polly and Debby can choose a pool account for each new
+child session. For a declared worker, set `args.account` on its first named
+`sys_session_send`:
+
+```json
+{"agent":"codex","title":"auth-fix","args":{"input":"Fix the auth bug","account":"codex-acc3"}}
+```
+
+For an existing registered agent, use `sys_session_create` with exactly one of
+`agent` (the exact name from `sys_agent_list`) or `agent_id`. Names include
+custom global agents registered from `~/.omnigent/agents` in the server catalog
+(for example with `omnigent server --agent ~/.omnigent/agents/designer`).
+You can combine the account pin with a model and reasoning effort:
+
+```json
+{"agent":"codex-3","account":"codex-acc3","model":"gpt-5.4","reasoning_effort":"high","title":"auth-fix"}
+```
+
+The tool writes `account` to the new session's `omnigent.account.id` label;
+the server uses that pin to select the credential home. Omit `account` to let
+the server choose from the pool. `config_path` creates do not accept `account`.
+
+Drive a created child with `sys_session_send` using its returned
+`conversation_id` as `session_id` and `args` as the message. Account pins apply
+only at creation: both named continuations and sends by `session_id` reject
+`args.account`. Continue without the pin, or close and create a new child to
+select another account. The same creation-only rule applies to model and effort.
+
+Named `sys_session_send` dispatches to Claude native and SDK workers also accept `sonnet`, `haiku`, and `opus`, plus
+`claude-sonnet`, `claude-haiku`, and `claude-opus`; dispatch normalizes the
+prefixed short forms to the bare aliases. Full model IDs keep working, and
+Claude workers still reject GPT models.
 
 ## API
 

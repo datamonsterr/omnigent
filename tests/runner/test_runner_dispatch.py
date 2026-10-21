@@ -4050,6 +4050,7 @@ async def test_sys_session_send_model_lands_in_child_create_body(
                         "args": {
                             "input": "fix the auth bug",
                             "model": model,
+                            "account": "codex-acc3",
                         },
                     }
                 ),
@@ -4069,6 +4070,8 @@ async def test_sys_session_send_model_lands_in_child_create_body(
     assert len(create_bodies) == 1, "fresh named send must create exactly one child"
     assert create_bodies[0]["model_override"] == model
     assert create_bodies[0]["sub_agent_name"] == "worker"
+    assert create_bodies[0]["labels"]["omnigent.account.id"] == "codex-acc3"
+    assert create_bodies[0]["labels"][subagent_work.SUBAGENT_DISPATCH_ID_LABEL_KEY]
 
 
 @pytest.mark.asyncio
@@ -4148,8 +4151,10 @@ async def test_sys_session_send_blocks_fresh_dispatch_when_harness_cli_missing(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("override", [{"model": "claude-opus-4-8"}, {"account": "codex-acc3"}])
 async def test_sys_session_send_model_rejected_for_existing_child(
     monkeypatch: pytest.MonkeyPatch,
+    override: dict[str, str],
 ) -> None:
     """
     Passing ``model`` on a continuation send fails loud, sends nothing.
@@ -4210,7 +4215,7 @@ async def test_sys_session_send_model_rejected_for_existing_child(
                     {
                         "agent": "worker",
                         "title": "fix-auth",
-                        "args": {"input": "continue", "model": "claude-opus-4-8"},
+                        "args": {"input": "continue", **override},
                     }
                 ),
                 server_client=server_client,
@@ -4231,7 +4236,8 @@ async def test_sys_session_send_model_rejected_for_existing_child(
 
 
 @pytest.mark.asyncio
-async def test_sys_session_send_model_rejected_in_by_id_mode() -> None:
+@pytest.mark.parametrize("override", [{"model": "claude-opus-4-8"}, {"account": "codex-acc3"}])
+async def test_sys_session_send_model_rejected_in_by_id_mode(override: dict[str, str]) -> None:
     """
     ``model`` plus ``session_id`` fails loud before any server call.
 
@@ -4260,7 +4266,7 @@ async def test_sys_session_send_model_rejected_in_by_id_mode() -> None:
                 arguments=json.dumps(
                     {
                         "session_id": "conv_some_child",
-                        "args": {"input": "continue", "model": "claude-opus-4-8"},
+                        "args": {"input": "continue", **override},
                     }
                 ),
                 server_client=server_client,
@@ -4271,7 +4277,7 @@ async def test_sys_session_send_model_rejected_in_by_id_mode() -> None:
             subagent_work._session_inboxes_ref.pop("conv_parent_by_id_model", None)
 
     assert output.startswith("Error:"), output
-    assert "model" in output
+    assert next(iter(override)) in output
     # Rejected before lookup: a misaddressed override must not even read
     # the target session.
     assert requests_seen == 0
@@ -4637,6 +4643,12 @@ async def _dispatch_model_send(
             "us.anthropic.claude-sonnet-4-6",
             id="non-mechanical-passthrough",
         ),
+        *[
+            pytest.param(harness, model, alias, id=f"{harness}-{model}")
+            for harness in ("claude-native", "claude-sdk")
+            for alias in ("sonnet", "haiku", "opus")
+            for model in (alias, "claude-" + alias)
+        ],
     ],
 )
 async def test_sys_session_send_localizes_canonical_model_for_gateway_child(
@@ -8248,7 +8260,8 @@ async def test_sys_session_create_maps_agent_not_found() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sys_session_create_spawns_child_under_caller() -> None:
+@pytest.mark.parametrize("address", [{"agent_id": "ag_x"}, {"agent": "designer"}])
+async def test_sys_session_create_spawns_child_under_caller(address: dict[str, str]) -> None:
     """
     ``sys_session_create`` POSTs a JSON create with
     ``parent_session_id`` forced to the caller (child-only), passes the
@@ -8262,6 +8275,19 @@ async def test_sys_session_create_spawns_child_under_caller() -> None:
     captured: dict[str, Any] = {}
 
     async def _server_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/v1/agents":
+            if request.url.params.get("after") == "ag_other":
+                return httpx.Response(
+                    200, json={"data": [{"id": "ag_x", "name": "designer"}], "has_more": False}
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "data": [{"id": "ag_other", "name": "other"}],
+                    "has_more": True,
+                    "last_id": "ag_other",
+                },
+            )
         if request.method == "POST" and request.url.path == "/v1/sessions":
             captured.update(json.loads(request.content))
             return httpx.Response(
@@ -8281,7 +8307,16 @@ async def test_sys_session_create_spawns_child_under_caller() -> None:
     ) as server_client:
         output = await execute_tool(
             tool_name="sys_session_create",
-            arguments=json.dumps({"agent_id": "ag_x", "title": "auth", "message": "start"}),
+            arguments=json.dumps(
+                {
+                    **address,
+                    "title": "auth",
+                    "message": "start",
+                    "account": "codex-acc3",
+                    "model": "gpt-5.4",
+                    "reasoning_effort": "high",
+                }
+            ),
             server_client=server_client,
             conversation_id="conv_caller",
         )
@@ -8291,6 +8326,9 @@ async def test_sys_session_create_spawns_child_under_caller() -> None:
     assert captured["parent_session_id"] == "conv_caller"
     assert captured["agent_id"] == "ag_x"
     assert captured["title"] == "auth"
+    assert captured["labels"] == {"omnigent.account.id": "codex-acc3"}
+    assert captured["model_override"] == "gpt-5.4"
+    assert captured["reasoning_effort"] == "high"
     assert captured["initial_items"][0]["data"]["content"][0]["text"] == "start"
     handle = json.loads(output)
     assert handle["conversation_id"] == "conv_child"
@@ -8305,6 +8343,8 @@ async def test_sys_session_create_spawns_child_under_caller() -> None:
         # Both modes at once: the two create different agents, so the
         # handler must refuse rather than silently pick one.
         {"agent_id": "ag_x", "config_path": "helper.yaml"},
+        {"agent": "designer", "agent_id": "ag_x"},
+        {"agent": "designer", "config_path": "helper.yaml"},
         # Neither mode: nothing to launch.
         {"title": "auth"},
     ],
@@ -13523,3 +13563,95 @@ async def test_eager_mcp_cache_keeps_named_child_scope_after_revision_change(mon
             assert response.status_code == 200, response.text
             assert "Worker instructions." in recording.posted_bodies[-1]["instructions"]
             assert "Root instructions." not in recording.posted_bodies[-1]["instructions"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rows", "status", "error"),
+    [
+        ([], 200, "agent_not_found"),
+        (
+            [{"id": "ag_a", "name": "designer"}, {"id": "ag_b", "name": "designer"}],
+            200,
+            "ambiguous",
+        ),
+        ([], 503, "registry lookup failed"),
+    ],
+)
+async def test_sys_session_create_name_resolution_errors_do_not_create(
+    rows: list[dict[str, str]],
+    status: int,
+    error: str,
+) -> None:
+    """Missing, ambiguous, or unavailable registry results never launch a child."""
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET" and request.url.path == "/v1/agents"
+        return httpx.Response(status, json={"data": rows, "has_more": False})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://server"
+    ) as client:
+        output = await execute_tool(
+            tool_name="sys_session_create",
+            arguments=json.dumps({"agent": "designer"}),
+            server_client=client,
+            conversation_id="conv_caller",
+        )
+    assert error in json.loads(output)["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["sys_session_create", "sys_session_send"])
+@pytest.mark.parametrize("account", [42, "", "   ", None])
+async def test_dispatch_rejects_malformed_account_before_server_access(
+    tool: str,
+    account: object,
+) -> None:
+    """Bypassing schema validation cannot silently discard an explicit bad pin."""
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"Invalid account must not reach {request.url}")
+
+    args = (
+        {"agent_id": "ag_x", "account": account}
+        if tool == "sys_session_create"
+        else {"session_id": "conv_child", "args": {"input": "go", "account": account}}
+    )
+    parent = "conv_invalid_account"
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://server"
+    ) as client:
+        try:
+            output = await execute_tool(
+                tool_name=tool,
+                arguments=json.dumps(args),
+                server_client=client,
+                conversation_id=parent,
+                session_inbox=asyncio.Queue(),
+            )
+        finally:
+            subagent_work._session_inboxes_ref.pop(parent, None)
+    assert "'account'" in output and "non-empty string" in output
+
+
+@pytest.mark.asyncio
+async def test_sys_session_create_config_path_rejects_account_before_upload() -> None:
+    """An unsupported bundle-mode pin fails instead of silently using another account."""
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"Unsupported pin must not upload to {request.url}")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://server"
+    ) as client:
+        output = await execute_tool(
+            tool_name="sys_session_create",
+            arguments=json.dumps({"config_path": "helper.yaml", "account": "codex-acc3"}),
+            server_client=client,
+            conversation_id="conv_caller",
+        )
+    assert "'account' requires agent or agent_id" in json.loads(output)["error"]

@@ -152,7 +152,13 @@ class SysSessionSendTool(Tool):
             "pass their file ids via the object args form's 'file_ids' "
             "list on the first named (agent, title) send only; file_ids "
             "cannot be used with session_id or when continuing an existing "
-            "named session. When a dispatched child finishes, the Omnigent "
+            "named session. To pin a pool account on a new named session, "
+            "pass args.account (e.g. codex-acc3 or agy-acc2); account, "
+            "model, and reasoning_effort cannot change on continuation sends. "
+            "For a global registered agent outside your declared workers, "
+            "use sys_session_create with agent by name, then send using "
+            "the returned conversation_id as session_id. "
+            "When a dispatched child finishes, the Omnigent "
             f"runtime posts `{SUBAGENT_WAKE_NOTICE_SHAPE}` into this session "
             "as a new message, starting a turn for you if you are idle. That "
             "notice comes from the runtime, not from a person; respond by "
@@ -369,10 +375,23 @@ def _build_sys_session_send_schema(
                                             "Optional model the sub-agent "
                                             "harness should run, e.g. a "
                                             "databricks-* endpoint name or "
-                                            "a harness-native model id. "
+                                            "a harness-native model id. Claude also accepts "
+                                            "sonnet, haiku, opus, and their "
+                                            "claude- prefixed aliases. "
                                             "Applies only when this send "
                                             "CREATES the sub-agent session; "
                                             "omitted = the harness default."
+                                        ),
+                                    },
+                                    "account": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "pattern": "\\S",
+                                        "description": (
+                                            "Optional pool account id, e.g. 'codex-acc3' "
+                                            "or 'agy-acc2'. Pins the account only when "
+                                            "this send creates a named session; rejected "
+                                            "on continuation and session_id sends."
                                         ),
                                     },
                                     "reasoning_effort": {
@@ -871,8 +890,11 @@ class SysSessionCreateTool(Tool):
     session. The child inherits the caller's runner (co-location), so it
     starts executing as soon as a message is queued.
 
-    Two addressing modes — exactly one of ``agent_id`` or
+    Three addressing modes — exactly one of ``agent``, ``agent_id``, or
     ``config_path`` must be given:
+
+    - **By name** — an exact registered name from ``sys_agent_list``,
+      including global custom agents registered from ``~/.omnigent/agents``.
 
     - **By agent id** — an existing agent the caller can see (a
       built-in/template or session-bound entry from ``sys_agent_list``
@@ -895,7 +917,7 @@ class SysSessionCreateTool(Tool):
     ``sys_session_get_info`` to monitor it, or ``sys_session_send`` (with
     the returned ``conversation_id``) to drive it further.
 
-    Runner-dispatched: both modes force ``parent_session_id`` to the
+    Runner-dispatched: all modes force ``parent_session_id`` to the
     caller.
     """
 
@@ -916,21 +938,25 @@ class SysSessionCreateTool(Tool):
             "exploration, scoped reads) prefer your native subagent "
             "tool if you have one; use sys_session_create to launch "
             "another registered agent or a durable, independently "
-            "visible session. Two modes — provide "
-            "exactly one: agent_id launches an existing agent (any "
+            "visible session. Provide exactly one: agent resolves an exact "
+            "registered name from sys_agent_list (e.g. codex-3 or designer, "
+            "including global custom agents registered from ~/.omnigent/agents); "
+            "agent_id launches an existing agent (any "
             "agent_id from sys_agent_list's builtins or session_agents, "
             "or from sys_agent_get); config_path uploads a new agent "
             "from a local agent config YAML, agent directory, or "
             ".tar.gz bundle in your working directory (e.g. authored "
-            "with sys_os_write) and launches it. Always use agent_id "
+            "with sys_os_write) and launches it. Use agent or agent_id "
             "for an agent that already exists — never download and "
-            "re-upload its bundle. Optionally queue an initial user "
+            "re-upload its bundle. With agent or agent_id, optionally set account "
+            "(pool account id), model, and reasoning_effort. "
+            "Optionally queue an initial user "
             "message. The new session is always a child of the calling "
             "session (you cannot create top-level or sibling sessions). "
             "Returns {conversation_id, agent_id, title, status}; the "
             "session runs asynchronously — monitor it with "
             "sys_session_get_history / sys_session_get_info or drive it "
-            "with sys_session_send."
+            "with sys_session_send(session_id=conversation_id)."
         )
 
     def get_schema(self) -> dict[str, Any]:
@@ -938,10 +964,10 @@ class SysSessionCreateTool(Tool):
         Return the OpenAI-format tool schema.
 
         :returns: Dict with ``"type": "function"`` and a
-            ``"function"`` sub-dict. Exactly one of ``agent_id`` /
+            ``"function"`` sub-dict. Exactly one of ``agent`` / ``agent_id`` /
             ``config_path`` is required — the mode split is enforced
             in the runner handler (the schema can't express
-            "exactly one of two fields" portably across providers).
+            "exactly one of three fields" portably across providers).
         """
         return {
             "type": "function",
@@ -951,6 +977,26 @@ class SysSessionCreateTool(Tool):
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "agent": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": (
+                                "Registered agent name from sys_agent_list, e.g. "
+                                "'codex-3' or 'designer', including global custom "
+                                "agents registered from ~/.omnigent/agents. Use "
+                                "instead of agent_id or config_path."
+                            ),
+                        },
+                        "account": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "\\S",
+                            "description": (
+                                "Optional pool account id, e.g. 'codex-acc3' or "
+                                "'agy-acc2'. Pins this new session's account. "
+                                "Use with agent or agent_id."
+                            ),
+                        },
                         "agent_id": {
                             "type": "string",
                             "description": (
@@ -959,7 +1005,7 @@ class SysSessionCreateTool(Tool):
                                 "sys_agent_list (both builtins and "
                                 "session_agents rows carry it) or "
                                 "sys_agent_get (a session's agent). "
-                                "Use instead of config_path."
+                                "Use instead of agent or config_path."
                             ),
                         },
                         "config_path": {
@@ -972,7 +1018,7 @@ class SysSessionCreateTool(Tool):
                                 "'.omnigent/agent-configs/helper.yaml'. "
                                 "Uploads it as a fresh agent and "
                                 "launches the child from it. Use "
-                                "instead of agent_id."
+                                "instead of agent or agent_id."
                             ),
                         },
                         "title": {
@@ -1016,14 +1062,14 @@ class SysSessionCreateTool(Tool):
                             "description": (
                                 "Optional reasoning level for the child "
                                 "session, e.g. 'high'. Only valid with "
-                                "'agent_id', and only for harnesses with "
+                                "'agent' or 'agent_id', and only for harnesses with "
                                 "effort plumbing; omit to use the agent's "
                                 "default."
                             ),
                         },
                     },
                     # Only the always-optional fields are listed in
-                    # ``required`` (none): the agent_id-vs-config_path
+                    # ``required`` (none): the agent/agent_id/config_path
                     # mode split is enforced in the runner handler.
                     "required": [],
                     "additionalProperties": False,
