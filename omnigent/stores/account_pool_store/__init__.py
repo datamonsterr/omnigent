@@ -23,6 +23,24 @@ from omnigent.entities.account_pool import (
 )
 
 
+def normalize_account_pool_harness(harness: str | None) -> str:
+    """Return the harness family shared by pool lookup and pin validation.
+
+    :param harness: A harness spelling, e.g. ``"codex-native"``.
+    :returns: Its family name, or an empty string when none was supplied.
+    """
+    if not harness:
+        return ""
+    from omnigent.harness_aliases import canonicalize_harness
+
+    normalized = canonicalize_harness(harness.strip().lower()) or ""
+    normalized = normalized.removeprefix("native-")
+    for suffix in ("-native", "-sdk", "_sdk", "-ui"):
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+    return normalized
+
+
 class AccountPoolStore(ABC):
     """
     Abstract base for account pool persistence.

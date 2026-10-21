@@ -8260,7 +8260,9 @@ async def test_sys_session_create_maps_agent_not_found() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("address", [{"agent_id": "ag_x"}, {"agent": "designer"}])
+@pytest.mark.parametrize(
+    "address", [{"agent_id": "ag_x"}, {"agent": "designer"}, {"agent": "  designer  "}]
+)
 async def test_sys_session_create_spawns_child_under_caller(address: dict[str, str]) -> None:
     """
     ``sys_session_create`` POSTs a JSON create with

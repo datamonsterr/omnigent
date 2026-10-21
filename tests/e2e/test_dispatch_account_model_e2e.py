@@ -22,15 +22,16 @@ from tests._helpers.live_server import isolated_local_server
 async def test_create_global_agent_by_name_with_account_model_and_effort(tmp_path: Path) -> None:
     """A registered global agent persists the requested account, model, and effort."""
     root = tmp_path / "server"
+    account_home = tmp_path / "account"
+    account_home.mkdir()
     agent = root / "server-home" / ".omnigent" / "agents" / "designer" / "config.yaml"
     agent.parent.mkdir(parents=True)
     agent.write_text(
         "spec_version: 1\nname: designer\nexecutor:\n"
-        "  type: omnigent\n  config:\n    harness: codex-native\n",
+        "  type: omnigent\n  config:\n    harness: codex-native\n"
+        f"    codex_home: {account_home / 'codex-acc1'}\n",
         encoding="utf-8",
     )
-    account_home = tmp_path / "account"
-    account_home.mkdir()
     with isolated_local_server(root, extra_args=["--agent", str(agent.parent)]) as base_url:
         async with httpx.AsyncClient(base_url=base_url, trust_env=False, timeout=30) as client:
             pool = await client.post(

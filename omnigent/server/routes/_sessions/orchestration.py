@@ -11763,10 +11763,15 @@ async def _create_session_from_existing_agent(
         if repl_labels:
             initial_labels.update(repl_labels)
 
-    # Forward custom codex_home or gemini_dir from agent spec config/labels
-    # so runner terminals isolate correctly.
+    from omnigent.account_pools.labels import ACCOUNT_ID_LABEL_KEY, LEGACY_ACCOUNT_ID_LABEL_KEY
+
+    explicit_account = (body.labels or {}).get(ACCOUNT_ID_LABEL_KEY) or (body.labels or {}).get(
+        LEGACY_ACCOUNT_ID_LABEL_KEY
+    )
+    # A requested account outranks saved credential homes. Caller-supplied
+    # homes remain in initial_labels so conflicting explicit inputs still fail.
     spec_for_env = sub_spec or own_spec or selection_spec
-    if spec_for_env is not None:
+    if spec_for_env is not None and not explicit_account:
         exec_cfg = getattr(spec_for_env.executor, "config", None)
         if isinstance(exec_cfg, dict):
             if "codex_home" in exec_cfg and "omnigent.codex.codex_home" not in initial_labels:
@@ -11805,7 +11810,6 @@ async def _create_session_from_existing_agent(
     # Account assignment: the pool inventory lives in the account pool store,
     # so the manager reads it per call and a runtime account change lands on
     # the next session create.
-    from omnigent.account_pools.labels import ACCOUNT_ID_LABEL_KEY
     from omnigent.account_pools.manager import (
         AccountPoolExhaustedError,
         await_session_account_visible,

@@ -3578,7 +3578,9 @@ async def _execute_session_create(
     try:
         account = _dispatch_account_from_args(args)
         if has_agent_name:
-            agent_id = await _session_create_agent_id_by_name(str(agent_name), server_client)
+            agent_id = await _session_create_agent_id_by_name(
+                str(agent_name).strip(), server_client
+            )
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     if has_config_path:

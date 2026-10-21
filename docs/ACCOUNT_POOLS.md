@@ -100,7 +100,11 @@ You can combine the account pin with a model and reasoning effort:
 ```
 
 The tool writes `account` to the new session's `omnigent.account.id` label;
-the server uses that pin to select the credential home. Omit `account` to let
+the server validates that the account exists, is enabled, serves the child's
+harness, and has no known exhausted or blocked quota. Invalid explicit pins
+fail creation without falling back to another account. The account's credential
+home overrides the agent spec's saved home; conflicting homes explicitly
+supplied in the same request are rejected. Omit `account` to let
 the server choose from the pool. `config_path` creates do not accept `account`.
 
 Drive a created child with `sys_session_send` using its returned
@@ -109,10 +113,11 @@ only at creation: both named continuations and sends by `session_id` reject
 `args.account`. Continue without the pin, or close and create a new child to
 select another account. The same creation-only rule applies to model and effort.
 
-Named `sys_session_send` dispatches to Claude native and SDK workers also accept `sonnet`, `haiku`, and `opus`, plus
-`claude-sonnet`, `claude-haiku`, and `claude-opus`; dispatch normalizes the
-prefixed short forms to the bare aliases. Full model IDs keep working, and
-Claude workers still reject GPT models.
+Named `sys_session_send` dispatches to Claude native and SDK workers also
+accept the family aliases `sonnet`, `haiku`, and `opus`, plus `claude-sonnet`,
+`claude-haiku`, and `claude-opus`. Dispatch normalizes these prefixed family
+aliases to bare aliases. Versioned model IDs pass through unchanged, and Claude
+workers still reject GPT models.
 
 ## API
 
