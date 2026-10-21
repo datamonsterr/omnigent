@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { AccountSelect } from "@/components/composer/AccountSelect";
 import { useCustomAgentConfig, usePatchCustomAgent } from "@/hooks/useCustomAgents";
 import { useBrainHarnessLabels } from "@/lib/agentLabels";
 import {
@@ -188,7 +189,8 @@ export function CustomAgentConfigForm({
                   aria-label="Harness"
                   className="h-9 w-full rounded-md border border-input bg-background px-3"
                   value={draft.harness}
-                  onChange={(e) => setDraft({ ...draft, harness: e.target.value })}
+                  // An account belongs to one harness's pool, so a harness switch resets it.
+                  onChange={(e) => setDraft({ ...draft, harness: e.target.value, accountId: null })}
                 >
                   {!Object.hasOwn(labels, draft.harness) && (
                     <option value={draft.harness}>{draft.harness || "Unspecified"}</option>
@@ -209,6 +211,13 @@ export function CustomAgentConfigForm({
                 />
               </label>
             </div>
+            <AccountSelect
+              harness={draft.harness}
+              value={draft.accountId}
+              onChange={(accountId) => setDraft({ ...draft, accountId })}
+              testId="agent-config-account"
+              label="Account"
+            />
             <label className="space-y-1 text-ui">
               Instructions
               <Textarea

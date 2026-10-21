@@ -1219,3 +1219,27 @@ async def test_runner_never_expands_an_installed_agents_variables(
 
     assert contents.status_code == 200, contents.text
     assert contents.headers["X-Agent-Session-Scoped"] == "true"
+
+
+async def test_config_patch_sets_and_clears_default_account(client) -> None:
+    installed = (await _install(client, ALICE, "orion")).json()
+    path = f"/v1/agents/{installed['id']}"
+    config = await client.get(f"{path}/config", headers=ALICE)
+    assert config.json()["account_id"] is None
+
+    pinned = await client.patch(
+        path,
+        headers={**ALICE, "If-Match": config.headers["etag"]},
+        json={"account_id": "codex-acc2"},
+    )
+    assert pinned.status_code == 200, pinned.text
+    assert pinned.json()["account_id"] == "codex-acc2"
+
+    cleared = await client.patch(
+        path,
+        headers={**ALICE, "If-Match": pinned.headers["etag"]},
+        json={"account_id": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["account_id"] is None
+    assert (await client.get(f"{path}/config", headers=ALICE)).json()["account_id"] is None

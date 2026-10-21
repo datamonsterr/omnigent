@@ -485,3 +485,24 @@ def test_model_and_harness_edits_require_compatible_executor(patch):
     with pytest.raises(HTTPException) as caught:
         edit_agent_bundle(bundle, AgentConfigPatch.model_validate(patch))
     assert caught.value.status_code == 409
+
+
+def test_account_id_edit_sets_projects_and_clears():
+    config = _CONFIG.replace(b"executor:\n", b"executor:\n  model: m\n")
+    bundle, spec = edit_agent_bundle(
+        bundle_files({"config.yaml": config}), AgentConfigPatch(account_id="codex-acc2")
+    )
+    assert spec.executor.config == {"harness": "claude-sdk", "account_id": "codex-acc2"}
+    agent = Agent("id", 1, "example", "blob")
+    assert agent_config_object(agent, spec).account_id == "codex-acc2"
+    assert edit_agent_bundle(bundle, AgentConfigPatch(account_id="codex-acc2"))[0] == bundle
+
+    _, cleared = edit_agent_bundle(bundle, AgentConfigPatch(account_id=None))
+    assert cleared.executor.config == {"harness": "claude-sdk"}
+    assert agent_config_object(agent, cleared).account_id is None
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_account_id_patch_rejects_blank(value):
+    with pytest.raises(ValueError):
+        AgentConfigPatch(account_id=value)

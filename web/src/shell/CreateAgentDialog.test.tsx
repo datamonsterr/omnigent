@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 
 import { CreateAgentDialog } from "./CreateAgentDialog";
+import { testAccountPool } from "@/test/accountPoolFixtures";
 
 function renderDialog(props: Partial<Parameters<typeof CreateAgentDialog>[0]> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -22,6 +23,24 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
+
+/** Serve the account pools; every other request fails so the form keeps its defaults. */
+function mockAccountPools() {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+    String(input).startsWith("/v1/account-pools")
+      ? new Response(JSON.stringify({ data: [testAccountPool("codex-native", ["codex-acc1"])] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      : new Response("{}", { status: 404 }),
+  );
+}
+
+/** Pick an option of a Radix Select by its visible label. */
+async function pick(testId: string, option: RegExp) {
+  fireEvent.keyDown(screen.getByTestId(testId), { key: "Enter" });
+  fireEvent.click(await screen.findByRole("option", { name: option }));
+}
 
 describe("CreateAgentDialog", () => {
   it("gives the form scroll region room for the fields' focus ring", () => {
@@ -83,6 +102,38 @@ describe("CreateAgentDialog", () => {
       expect(screen.getByTestId(`create-agent-${field}`)).toHaveValue("");
     }
     expect(screen.queryByTestId("create-agent-mcp-entry")).toBeNull();
+  });
+
+  it("offers the harness pool's accounts and sends the picked account", async () => {
+    mockAccountPools();
+    const onCreate = vi.fn();
+    renderDialog({ onCreate });
+    fireEvent.change(screen.getByTestId("create-agent-name"), { target: { value: "agent-1" } });
+    fireEvent.change(screen.getByTestId("create-agent-model"), { target: { value: "m" } });
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(screen.queryByTestId("create-agent-account")).toBeNull();
+
+    await pick("create-agent-harness", /^Codex$/);
+    expect(await screen.findByTestId("create-agent-account")).toHaveTextContent("Auto");
+    await pick("create-agent-account", /codex-acc1/);
+    fireEvent.click(screen.getByTestId("create-agent-submit"));
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ harness: "codex", accountId: "codex-acc1" }),
+    );
+  });
+
+  it("resets the picked account when the harness changes", async () => {
+    mockAccountPools();
+    const onCreate = vi.fn();
+    renderDialog({ onCreate });
+    fireEvent.change(screen.getByTestId("create-agent-name"), { target: { value: "agent-1" } });
+    fireEvent.change(screen.getByTestId("create-agent-model"), { target: { value: "m" } });
+    await pick("create-agent-harness", /^Codex$/);
+    await pick("create-agent-account", /codex-acc1/);
+    await pick("create-agent-harness", /^Claude SDK$/);
+    expect(screen.queryByTestId("create-agent-account")).toBeNull();
+    fireEvent.click(screen.getByTestId("create-agent-submit"));
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ accountId: null }));
   });
 
   it("hides Import bundle without an import handler", () => {
