@@ -140,14 +140,11 @@ export async function createAccount(
   poolId: string,
   payload: CreateAccountPayload,
 ): Promise<AccountPoolAccount> {
-  const res = await authenticatedFetch(
-    `/v1/account-pools/${encodeURIComponent(poolId)}/accounts`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
+  const res = await authenticatedFetch(`/v1/account-pools/${encodeURIComponent(poolId)}/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
   if (!res.ok) throw new Error(await errorDetail(res, "Could not create the account."));
   return (await res.json()) as AccountPoolAccount;
 }
@@ -195,11 +192,16 @@ async function errorDetail(res: Response, fallback: string): Promise<string> {
  * The server normalizes the harness spelling, so a pool named for
  * `codex-native` also serves `codex` and `codex-sdk`.
  */
-export function poolForHarness(pools: readonly AccountPool[], harness: string | null): AccountPool | null {
+export function poolForHarness(
+  pools: readonly AccountPool[],
+  harness: string | null,
+): AccountPool | null {
   if (!harness) return null;
   const normalized = harness.toLowerCase().replace(/-(native|sdk|ui)$/, "");
   return (
-    pools.find((pool) => pool.harness.toLowerCase().replace(/-(native|sdk|ui)$/, "") === normalized) ??
+    pools.find(
+      (pool) => pool.harness.toLowerCase().replace(/-(native|sdk|ui)$/, "") === normalized,
+    ) ??
     pools.find((pool) => pool.name === "default") ??
     null
   );

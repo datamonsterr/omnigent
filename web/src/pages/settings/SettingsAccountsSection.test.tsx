@@ -63,11 +63,12 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Response) {
 
 describe("SettingsAccountsSection", () => {
   it("lists the pools, their accounts, and the usage totals", async () => {
-    mockFetch(() =>
-      new Response(JSON.stringify(POOLS), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+    mockFetch(
+      () =>
+        new Response(JSON.stringify(POOLS), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
     render(
       <TestWrapper>
@@ -84,11 +85,12 @@ describe("SettingsAccountsSection", () => {
   });
 
   it("stays usable on a narrow viewport", async () => {
-    mockFetch(() =>
-      new Response(JSON.stringify(POOLS), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+    mockFetch(
+      () =>
+        new Response(JSON.stringify(POOLS), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
     // A mobile viewport: the section must not depend on a wide layout.
     window.innerWidth = 390;
