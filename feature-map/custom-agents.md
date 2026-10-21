@@ -7,7 +7,10 @@ and deletes owned agents.
 ## Sub-features
 
 - `list`: server cards, owned rows, search of loaded results, and pagination.
-- `create`: name, description, harness, model, account (Auto or an enabled account), instructions, and MCP servers.
+- `create`: name, description, harness, account, model, instructions, and MCP servers.
+- `account`: the agent's default harness account (`executor.config.account_id`),
+  picked under Harness when an account pool serves that harness; `Auto` lets
+  the server pick per session.
 - `review`: configuration preview, including version, dates, MCP servers, and skills.
 - `edit`: partial configuration updates, explicit credential replacement/removal,
   dirty-draft confirmation, error retention, and stale-revision reload.
@@ -62,6 +65,18 @@ requires `user_owned: true` and `agent_config_edit: true`.
   persistence and conflict recovery against the real API; it enables only the UI
   release flag in the info response. Cold desktop bookmarks and mobile list entry
   are covered. Manually check desktop list entry and normal Settings navigation.
+- Account: register a Codex pool (Settings › Accounts or `omnigent accounts`),
+  create a `Codex` agent, and confirm an Account field appears under Harness with
+  `Auto` selected; it is hidden for a harness without a pool and resets on a
+  harness switch. Pick an account, save, and start a session: the session's
+  `omnigent.account.id` and `omnigent.codex.codex_home` labels name that
+  account. In the edit form, change or clear the account and confirm PATCH sends
+  only `account_id`. A composer account pick overrides the agent default. The
+  same field is in the new-session Create custom agent dialog. Antigravity
+  accounts use `gemini_dir` when added in Settings > Accounts. Explicit invalid
+  account selections reject; a removed saved agent default falls back to the pool.
+  Open the session's Agents rail and verify its account, reported model, and effort
+  chips, including child rows after spawning an agent.
 - Delete: cancel once and verify the agent remains, then delete and verify the
   list and API omit it. For an agent used by a session, verify the initial
   deletion reports the count and waits for Remove anyway. Only that action
@@ -98,5 +113,8 @@ requires `user_owned: true` and `agent_config_edit: true`.
 - Search covers loaded results. Load more to include older agents.
 - A detail bookmark uses the single-agent endpoint, independently of list
   pagination. Duplicate names are separate rows identified by ID.
+- An agent account that is later removed or disabled falls back to the pool's
+  automatic pick (logged as a warning); the session never launches without a
+  credential home.
 - Built-in harness wrappers belong in Harnesses settings. The older Create
   custom agent dialog in new-session composition still starts a session.

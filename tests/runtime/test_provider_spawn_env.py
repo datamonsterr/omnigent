@@ -1212,6 +1212,25 @@ def test_qwen_uses_openai_global_default(config_home: Path) -> None:
     assert env["HARNESS_QWEN_MODEL"] == "gpt-default-model"
 
 
+@pytest.mark.parametrize("label_key", ["omnigent.codex.codex_home", "codex_home"])
+def test_codex_sdk_spawn_env_reads_session_account_home(
+    config_home: Path, tmp_path: Path, label_key: str
+) -> None:
+    """The SDK codex harness bridges auth from the session's account home."""
+    from omnigent.runner.app import _build_spawn_env_from_spec, _codex_home_from_labels
+
+    _write_config(config_home, _openai_default_config())
+    account_home = _codex_home_from_labels({label_key: str(tmp_path / "codex-acc2")})
+
+    env = _build_spawn_env_from_spec(_make_spec(harness="codex"), "codex", codex_home=account_home)
+    assert env is not None
+    assert env["CODEX_HOME"] == str(tmp_path / "codex-acc2")
+    unpinned = _build_spawn_env_from_spec(_make_spec(harness="codex"), "codex")
+    assert unpinned is not None and "CODEX_HOME" not in unpinned
+    other = _build_spawn_env_from_spec(_make_spec(harness="qwen"), "qwen", codex_home=account_home)
+    assert other is not None and "CODEX_HOME" not in other
+
+
 def test_goose_spawn_env_forwards_model_and_no_gateway(config_home: Path) -> None:
     """The headless goose builder forwards a spec model as ``HARNESS_GOOSE_MODEL``
     and wires NO provider/gateway credential (Goose owns its own auth)."""

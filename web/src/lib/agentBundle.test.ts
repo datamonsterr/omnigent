@@ -94,6 +94,19 @@ describe("buildAgentBundle", () => {
     expect(yaml).toContain("web_fetch");
     expect(yaml).not.toContain("instructions:");
     expect(yaml).not.toContain("description:");
+    expect(yaml).not.toContain("account_id:");
+  });
+
+  it("writes the default account id under the executor config", async () => {
+    const yaml = await extractConfigYaml(
+      await buildAgentBundle({
+        name: "codex-agent",
+        harness: "codex",
+        model: "gpt-5.5",
+        accountId: "codex-acc2",
+      }),
+    );
+    expect(yaml).toContain("  config:\n    harness: codex\n    account_id: codex-acc2\n");
   });
 
   it("persists an account pin in executor config and omits Auto", async () => {

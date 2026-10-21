@@ -210,6 +210,19 @@ export function poolForHarness(
   );
 }
 
+/** SDK harnesses that run on a native harness family's accounts. */
+const SDK_ACCOUNT_HARNESSES: Record<string, string> = { codex: "codex-native" };
+
+/**
+ * The account-pool harness of an SDK harness, e.g. `codex` → `codex-native`.
+ *
+ * Returns `null` for an SDK harness without an account family, so the
+ * composer shows no account picker for it.
+ */
+export function accountPoolHarness(harness: string | null): string | null {
+  return harness ? (SDK_ACCOUNT_HARNESSES[harness] ?? null) : null;
+}
+
 /** Accounts of a pool that may still serve a new session. */
 export function selectableAccounts(pool: AccountPool | null): AccountPoolAccount[] {
   if (!pool) return [];

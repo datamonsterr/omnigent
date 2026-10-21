@@ -17,8 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { BRAIN_HARNESS_LABELS, useBrainHarnessLabels } from "@/lib/agentLabels";
 import { AccountSelect } from "@/components/composer/AccountSelect";
+import { BRAIN_HARNESS_LABELS, useBrainHarnessLabels } from "@/lib/agentLabels";
 import type { AgentBundleInput, MCPServerInput } from "@/lib/agentBundle";
 
 /**
@@ -300,9 +300,9 @@ function useAgentFormFields() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
-  const [harness, setHarness] = useState(DEFAULT_HARNESS);
-  const [model, setModel] = useState("");
+  const [harness, setHarnessValue] = useState(DEFAULT_HARNESS);
   const [accountId, setAccountId] = useState<string | null>(null);
+  const [model, setModel] = useState("");
   const [mcpEntries, setMcpEntries] = useState<MCPFormEntry[]>([]);
   const [nextKey, setNextKey] = useState(0);
 
@@ -310,11 +310,17 @@ function useAgentFormFields() {
     setName("");
     setDescription("");
     setInstructions("");
-    setHarness(DEFAULT_HARNESS);
-    setModel("");
+    setHarnessValue(DEFAULT_HARNESS);
     setAccountId(null);
+    setModel("");
     setMcpEntries([]);
     setNextKey(0);
+  }
+
+  // An account belongs to one harness's pool, so a harness switch resets it.
+  function setHarness(next: string) {
+    setHarnessValue(next);
+    setAccountId(null);
   }
 
   function addMCPServer() {
@@ -353,13 +359,10 @@ function useAgentFormFields() {
     instructions,
     setInstructions,
     harness,
-    setHarness: (next: string) => {
-      setHarness(next);
-      setAccountId(null);
-    },
+    setHarness,
+    harnessOptions,
     accountId,
     setAccountId,
-    harnessOptions,
     model,
     setModel,
     mcpEntries,
@@ -462,6 +465,7 @@ function AgentFormFields({
         </Select>
       </div>
 
+      {/* Account: shown only when a pool serves the harness */}
       <AccountSelect
         harness={harness}
         value={accountId}
