@@ -103,6 +103,8 @@ const FAILURE_CODE_DESCRIPTIONS: Record<string, string> = {
     "The model service hit a temporary error mid-response; retrying usually continues the turn.",
   budget_exhausted:
     "The AI gateway refused this turn because a spending budget or usage limit is exhausted. Contact an admin to raise it, or use a different budget.",
+  quota_exhausted:
+    "The provider refused this turn because this account's usage quota is exhausted. Wait for the vendor's reset, or use a different provider.",
   codex_compaction_model_failed:
     "Codex couldn't compact the conversation on the previous model, so this turn didn't run.",
   client_update_required:
@@ -110,8 +112,13 @@ const FAILURE_CODE_DESCRIPTIONS: Record<string, string> = {
 };
 
 const COMPACTION_MODEL_FAILED_CODE = "codex_compaction_model_failed";
-// A spent budget, and the compaction it blocks, is an account limit rather than a failure.
-const NEUTRAL_TONE_CODES = new Set(["budget_exhausted", COMPACTION_MODEL_FAILED_CODE]);
+// A spent budget, an exhausted provider quota, and the compaction it blocks
+// are account limits rather than failures.
+const NEUTRAL_TONE_CODES = new Set([
+  "budget_exhausted",
+  "quota_exhausted",
+  COMPACTION_MODEL_FAILED_CODE,
+]);
 
 const RETRYABLE_ERROR_CODES = new Set([
   "required_terminal_exited",

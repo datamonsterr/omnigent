@@ -104,7 +104,11 @@ from omnigent.runner.background_titles import (
 )
 from omnigent.runner.background_titles.service import BACKGROUND_TITLE_MAX_PROMPT_CHARS
 from omnigent.runner.codex.goal import CodexGoalRunner
-from omnigent.runner.launch_failure import FailureDiagnosis, classify_terminal_failure
+from omnigent.runner.launch_failure import (
+    QUOTA_EXHAUSTED_CODE,
+    FailureDiagnosis,
+    classify_terminal_failure,
+)
 from omnigent.runner.mcp_execution_registry import (
     McpExecutionRegistry,
 )
@@ -1743,6 +1747,11 @@ def create_runner_app(
             error["cause"] = diagnosis.cause
             if diagnosis.remediation:
                 error["remediation"] = diagnosis.remediation
+            if diagnosis.code is not None:
+                # A recognized cause replaces the generic exit code so the UI
+                # renders it as what it is (e.g. an exhausted provider quota:
+                # a notice, not a retryable crash).
+                error["code"] = diagnosis.code
         return error
 
     def _live_terminal_pane_snapshot(conv_id: str) -> str | None:
@@ -1855,7 +1864,31 @@ def create_runner_app(
         _native_pane_status.pop(event.session_id, None)
 
         if event.terminal_name in ("qwen", "antigravity") and event.session_key == "main":
+            # A provider quota exhaustion is NOT a user-initiated quit: the
+            # worker died because the vendor refused the turn (Antigravity
+            # prints "⚠ Individual quota reached. …" and exits). Report the
+            # terminal failure it is — the card then names the exhausted quota
+            # instead of a clean stop — and settle the dispatch, or the parent
+            # orchestrator waits forever on a worker that is long gone.
+            if diagnosis is not None and diagnosis.code == QUOTA_EXHAUSTED_CODE:
+                _publish_event(
+                    event.session_id,
+                    {"type": "session.status", "status": "failed", "error": error},
+                )
+                _settle_unfinished_subagent_dispatch(
+                    event.session_id,
+                    output=error["message"],
+                )
+                _release_required_terminal_session(event.session_id)
+                return
             _publish_event(event.session_id, {"type": "session.status", "status": "idle"})
+            # A clean quit is not a completion: a dispatched worker that quit
+            # without delivering a result must still settle its dispatch, or
+            # the parent keeps waiting on a worker that is long gone.
+            _settle_unfinished_subagent_dispatch(
+                event.session_id,
+                output="The worker's terminal exited before it delivered a result.",
+            )
             _release_required_terminal_session(event.session_id)
             return
 
@@ -4585,6 +4618,30 @@ def create_runner_app(
     # Seam for the entrypoint's launch reaper (and tests): terminal delivery
     # that also schedules the parent wake POST, not just the inbox insert.
     app.state.mark_subagent_terminal_and_wake = _mark_subagent_terminal_and_wake
+
+    def _settle_unfinished_subagent_dispatch(
+        session_id: str,
+        *,
+        output: str,
+        status: str = "failed",
+    ) -> None:
+        """Settle a dispatched worker's registration when its terminal dies.
+
+        A worker whose terminal exits without delivering a result leaves its
+        dispatch entry in flight, so the parent orchestrator waits for a
+        result that never arrives. Settle the entry as a terminal status
+        (``failed`` by default) so the parent is woken — unless the worker
+        already reported a terminal outcome, which a later delivery must not
+        overturn.
+
+        :param session_id: The worker's session id, e.g. ``"conv_child123"``.
+        :param output: The failure text delivered to the parent's inbox.
+        :param status: Terminal status to record; ``"failed"`` by default.
+        """
+        entry = get_subagent_work(session_id)
+        if entry is None or entry.status in _SUBAGENT_TERMINAL_STATUSES:
+            return
+        _mark_subagent_terminal_and_wake(session_id, status=status, output=output)
 
     _subagent_recovery = build_subagent_recovery(
         app,

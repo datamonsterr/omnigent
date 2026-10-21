@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
 
 from omnigent.entities.session_resources import SessionResourceView
@@ -4877,6 +4878,249 @@ async def test_required_terminal_voluntary_exit_publishes_idle_not_failed() -> N
         for event in queued_events
         if event.get("type") == "session.status" and event.get("status") == "failed"
     ] == []
+    # The harness subprocess is released.
+    assert pm.released == [conv_id]
+
+
+# The text Antigravity prints when the account's individual quota is spent.
+_AGY_QUOTA_OUTPUT = (
+    "⚠ Individual quota reached. Please upgrade your subscription to increase "
+    "your limits. Resets in 59h34m38s. Error ID: 57ba7ed4-a9d8-441b-ac43-104181eb9778-2"
+)
+
+
+@pytest.mark.asyncio
+async def test_required_terminal_quota_exit_fails_session_with_quota_diagnosis() -> None:
+    """An Antigravity exit caused by an exhausted quota is a failure, not a clean quit.
+
+    Antigravity prints its quota notice in the pane and exits when the
+    account's individual quota is spent. The clean-quit special case must not
+    swallow that: the session has to fail with the quota diagnosis so the
+    card names the exhausted quota instead of a clean stop.
+    """
+    from omnigent.runner.app import _session_event_queues_ref
+    from omnigent.runner.resource_registry import (
+        TerminalExitEvent,
+        TerminalLifecycle,
+    )
+
+    conv_id = uuid.uuid4().hex
+    pm = _FakeProcessManager(_ScriptedHarnessClient([]))
+    pm._sessions.add(conv_id)
+    app = create_runner_app(
+        process_manager=pm,  # type: ignore[arg-type]
+        server_client=NullServerClient(),  # type: ignore[arg-type]
+    )
+    resource_registry = app.state.session_resource_registry
+    publish_exit = resource_registry._terminal_exit_publisher
+    assert callable(publish_exit)
+
+    try:
+        publish_exit(
+            TerminalExitEvent(
+                session_id=conv_id,
+                terminal_id="terminal_antigravity_main",
+                terminal_name="antigravity",
+                session_key="main",
+                lifecycle=TerminalLifecycle.REQUIRED,
+                exit_status=1,
+                session_was_idle=False,
+                last_output=_AGY_QUOTA_OUTPUT,
+            )
+        )
+        queued_events: list[dict[str, Any]] = []
+        for _ in range(1000):
+            queued_events.extend(
+                _drain_session_event_queue(_session_event_queues_ref.get(conv_id))
+            )
+            if pm.released:
+                break
+            await asyncio.sleep(0)
+    finally:
+        _session_event_queues_ref.pop(conv_id, None)
+        subagent_work.unregister_child_session(conv_id)
+
+    failures = [
+        event
+        for event in queued_events
+        if event.get("type") == "session.status" and event.get("status") == "failed"
+    ]
+    assert len(failures) == 1
+    error = failures[0]["error"]
+    assert error["code"] == "quota_exhausted"
+    assert "quota" in error["title"].lower()
+    # The harness is still released — the terminal is gone either way.
+    assert pm.released == [conv_id]
+
+
+@pytest.mark.asyncio
+async def test_required_terminal_quota_exit_settles_the_worker_dispatch() -> None:
+    """A worker that dies on an exhausted quota must not strand its parent.
+
+    The orchestrator waits for the worker's result in its inbox; a worker
+    whose terminal exits without delivering one must still settle the
+    dispatch, or the orchestrator waits forever on a worker that is long gone.
+    """
+    from omnigent.runner.app import _session_event_queues_ref
+    from omnigent.runner.resource_registry import (
+        TerminalExitEvent,
+        TerminalLifecycle,
+    )
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    parent_id = uuid.uuid4().hex
+    conv_id = uuid.uuid4().hex
+    session_inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    pm = _FakeProcessManager(_ScriptedHarnessClient([]))
+    pm._sessions.add(conv_id)
+    app = create_runner_app(
+        process_manager=pm,  # type: ignore[arg-type]
+        server_client=NullServerClient(),  # type: ignore[arg-type]
+    )
+    resource_registry = app.state.session_resource_registry
+    publish_exit = resource_registry._terminal_exit_publisher
+    assert callable(publish_exit)
+
+    subagent_work._session_inboxes_ref[parent_id] = session_inbox
+    subagent_work.register_subagent_work(
+        parent_session_id=parent_id,
+        child_session_id=conv_id,
+        agent="agy",
+        title="implement-quota",
+    )
+
+    try:
+        publish_exit(
+            TerminalExitEvent(
+                session_id=conv_id,
+                terminal_id="terminal_antigravity_main",
+                terminal_name="antigravity",
+                session_key="main",
+                lifecycle=TerminalLifecycle.REQUIRED,
+                exit_status=1,
+                session_was_idle=False,
+                last_output=_AGY_QUOTA_OUTPUT,
+            )
+        )
+        for _ in range(1000):
+            if pm.released:
+                break
+            await asyncio.sleep(0)
+
+        async def _server_handler(request: httpx.Request) -> httpx.Response:
+            """Serve the parent TOOL_RESULT policy check."""
+            if (
+                request.method == "POST"
+                and request.url.path == f"/v1/sessions/{parent_id}/policies/evaluate"
+            ):
+                return httpx.Response(200, json={"result": "POLICY_ACTION_UNSPECIFIED"})
+            return httpx.Response(404, json={"error": str(request.url)})
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_server_handler),
+            base_url="http://server",
+        ) as server_client:
+            inbox_output = await execute_tool(
+                tool_name="sys_read_inbox",
+                arguments="{}",
+                server_client=server_client,
+                conversation_id=parent_id,
+                session_inbox=session_inbox,
+            )
+    finally:
+        subagent_work.unregister_subagent_work(conv_id)
+        subagent_work._session_inboxes_ref.pop(parent_id, None)
+        _session_event_queues_ref.pop(conv_id, None)
+        subagent_work.unregister_child_session(conv_id)
+
+    # The parent is woken with the worker's terminal failure and its reason.
+    assert "failed" in inbox_output
+    assert "quota" in inbox_output.lower()
+
+
+@pytest.mark.asyncio
+async def test_required_terminal_clean_quit_settles_the_worker_dispatch() -> None:
+    """A worker that quits cleanly without a result must still settle its dispatch.
+
+    The clean-quit path publishes ``idle`` (no failure card for a top-level
+    session), but a dispatched worker that quit without delivering a result
+    would otherwise leave the orchestrator waiting forever.
+    """
+    from omnigent.runner.app import _session_event_queues_ref
+    from omnigent.runner.resource_registry import (
+        TerminalExitEvent,
+        TerminalLifecycle,
+    )
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    parent_id = uuid.uuid4().hex
+    conv_id = uuid.uuid4().hex
+    session_inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    pm = _FakeProcessManager(_ScriptedHarnessClient([]))
+    pm._sessions.add(conv_id)
+    app = create_runner_app(
+        process_manager=pm,  # type: ignore[arg-type]
+        server_client=NullServerClient(),  # type: ignore[arg-type]
+    )
+    resource_registry = app.state.session_resource_registry
+    publish_exit = resource_registry._terminal_exit_publisher
+    assert callable(publish_exit)
+
+    subagent_work._session_inboxes_ref[parent_id] = session_inbox
+    subagent_work.register_subagent_work(
+        parent_session_id=parent_id,
+        child_session_id=conv_id,
+        agent="agy",
+        title="implement-quit",
+    )
+
+    try:
+        publish_exit(
+            TerminalExitEvent(
+                session_id=conv_id,
+                terminal_id="terminal_antigravity_main",
+                terminal_name="antigravity",
+                session_key="main",
+                lifecycle=TerminalLifecycle.REQUIRED,
+                exit_status=0,
+                session_was_idle=False,
+                last_output="No changes made.",
+            )
+        )
+        for _ in range(1000):
+            if pm.released:
+                break
+            await asyncio.sleep(0)
+
+        async def _server_handler(request: httpx.Request) -> httpx.Response:
+            """Serve the parent TOOL_RESULT policy check."""
+            if (
+                request.method == "POST"
+                and request.url.path == f"/v1/sessions/{parent_id}/policies/evaluate"
+            ):
+                return httpx.Response(200, json={"result": "POLICY_ACTION_UNSPECIFIED"})
+            return httpx.Response(404, json={"error": str(request.url)})
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_server_handler),
+            base_url="http://server",
+        ) as server_client:
+            inbox_output = await execute_tool(
+                tool_name="sys_read_inbox",
+                arguments="{}",
+                server_client=server_client,
+                conversation_id=parent_id,
+                session_inbox=session_inbox,
+            )
+    finally:
+        subagent_work.unregister_subagent_work(conv_id)
+        subagent_work._session_inboxes_ref.pop(parent_id, None)
+        _session_event_queues_ref.pop(conv_id, None)
+        subagent_work.unregister_child_session(conv_id)
+
+    # The dispatch settled (the parent was woken) instead of hanging.
+    assert "failed" in inbox_output
+    assert "terminal exited before it delivered a result" in inbox_output
     # The harness subprocess is released.
     assert pm.released == [conv_id]
 

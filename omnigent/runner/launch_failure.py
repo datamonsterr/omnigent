@@ -37,6 +37,11 @@ __all__ = [
 # A Codex turn failed while compacting on the thread's previous model, not the selected one.
 CODEX_COMPACTION_MODEL_FAILED = "codex_compaction_model_failed"
 
+# The provider's own per-account usage quota is exhausted. Terminal for this
+# account: the same request fails identically until the vendor's reset window
+# passes, so the work needs another provider/vendor (or a wait).
+QUOTA_EXHAUSTED_CODE = "quota_exhausted"
+
 
 @dataclass(frozen=True)
 class FailureDiagnosis:
@@ -49,12 +54,16 @@ class FailureDiagnosis:
     :param remediation: The concrete next step, e.g. a command to run or a
         config to change. ``None`` when there is no single clear fix.
     :param category: Fault attribution stamped on the failure's log row.
+    :param code: Semantic failure code, e.g. ``"quota_exhausted"``. Lets a
+        caller branch on the cause without re-matching the diagnosis text.
+        ``None`` when the diagnosis has no dedicated code.
     """
 
     title: str
     cause: str
     remediation: str | None = None
     category: ErrorCategory = ErrorCategory.CONFIG
+    code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +115,21 @@ _AUTH_MARKERS = (
     "not authenticated",
 )
 
+# --- provider quota exhausted -------------------------------------------------
+# The provider's own per-account usage quota, reported in the harness output:
+#   "⚠ Individual quota reached. Please upgrade your subscription to increase
+#    your limits. Resets in 59h34m38s. Error ID: …"  (Antigravity)
+#   "Claude usage limit reached. …"                   (Claude Code)
+# Terminal for this account: the identical request fails identically until the
+# vendor's reset window passes, so the work must move to another provider.
+_QUOTA_EXHAUSTED_MARKERS = (
+    "individual quota reached",
+    "quota reached",
+    "usage limit reached",
+    "upgrade your subscription to increase your limits",
+    "exceeded your quota",
+)
+
 # --- binary missing -----------------------------------------------------------
 _MISSING_MARKERS = (
     "command not found",
@@ -140,6 +164,24 @@ _TERMINAL_EXIT_MATCHERS: tuple[_TerminalMatcher, ...] = (
                 "--dangerously-skip-permissions when running as the root user."
             ),
             remediation="Run the host as a non-root user (uid != 0).",
+        ),
+    ),
+    _TerminalMatcher(
+        "quota_exhausted",
+        lambda s: s.output_contains_any(_QUOTA_EXHAUSTED_MARKERS),
+        FailureDiagnosis(
+            title="The provider's usage quota is exhausted",
+            cause=(
+                "The agent's provider refused the turn because this account's "
+                "usage quota is exhausted — the vendor reports when it resets. "
+                "Retrying now fails the same way."
+            ),
+            remediation=(
+                "Wait for the vendor's reset window, or route the work to a "
+                "different provider / vendor."
+            ),
+            category=ErrorCategory.USER,
+            code=QUOTA_EXHAUSTED_CODE,
         ),
     ),
     _TerminalMatcher(
@@ -260,7 +302,9 @@ def classify_native_turn_error(code: str, message: str) -> str:
     deployment's byte cap before the model sees it). Also corrects
     ``codex_reauth_required`` when the message reveals that the real
     cause is a budget/usage-limit exhaustion (older runners misclassify the
-    gateway's 403 as auth; the server fixes it on deploy).
+    gateway's 403 as auth; the server fixes it on deploy), and names the
+    provider's own exhausted quota (``quota_exhausted``) so the failure is
+    reported as terminal for this account instead of a generic error.
 
     :param code: Existing error code; specific diagnoses are preserved.
     :param message: Native harness error text, from its status or transcript.
@@ -270,6 +314,11 @@ def classify_native_turn_error(code: str, message: str) -> str:
         # Its budget text names the previous model's limit; the card explains it.
         return code
     lowered = message.lower()
+    if any(marker in lowered for marker in _QUOTA_EXHAUSTED_MARKERS):
+        # The provider's own quota: terminal for this account, so it outranks a
+        # misclassified auth/rate-limit code the same way the gateway's budget
+        # exhaustion does.
+        return QUOTA_EXHAUSTED_CODE
     if any(fragment in lowered for fragment in _BUDGET_EXHAUSTED_FRAGMENTS):
         return "budget_exhausted"
     if code not in {"native_turn_error", "codex_turn_error"}:
@@ -478,6 +527,10 @@ _FAILURE_CODE_DESCRIPTIONS: dict[str, str] = {
     "budget_exhausted": (
         "The AI gateway refused this turn because a spending budget or usage limit is "
         "exhausted. Contact an admin to raise it, or use a different budget."
+    ),
+    QUOTA_EXHAUSTED_CODE: (
+        "The provider refused this turn because this account's usage quota is "
+        "exhausted. Wait for the vendor's reset, or use a different provider."
     ),
     "client_update_required": (
         "The agent CLI on the host is too old for the selected model. Update it on the "

@@ -284,6 +284,54 @@ def test_genuine_reauth_codex_reauth_required_is_preserved() -> None:
     assert classify_native_turn_error("codex_reauth_required", message) == "codex_reauth_required"
 
 
+# The notice Antigravity prints when the account's individual quota is spent.
+_AGY_QUOTA_OUTPUT = (
+    "⚠ Individual quota reached. Please upgrade your subscription to increase "
+    "your limits. Resets in 59h34m38s. Error ID: 57ba7ed4-a9d8-441b-ac43-104181eb9778-2"
+)
+
+
+@pytest.mark.parametrize("code", ["native_turn_error", "codex_turn_error"])
+@pytest.mark.parametrize(
+    "message",
+    [
+        _AGY_QUOTA_OUTPUT,
+        "Claude usage limit reached. Your limit will reset at 5pm.",
+        "You have exceeded your quota for this account.",
+    ],
+)
+def test_classifies_vendor_quota_exhaustion(code: str, message: str) -> None:
+    """The provider's own exhausted quota is terminal for this account."""
+    assert classify_native_turn_error(code, message) == "quota_exhausted"
+
+
+def test_quota_text_outranks_a_misclassified_auth_code() -> None:
+    """A quota notice is not an auth failure — re-authenticating cannot fix it."""
+    assert (
+        classify_native_turn_error("codex_reauth_required", _AGY_QUOTA_OUTPUT) == "quota_exhausted"
+    )
+
+
+def test_classifies_terminal_exit_caused_by_an_exhausted_quota() -> None:
+    """A terminal exit whose pane shows the quota notice names the exhausted quota."""
+    diagnosis = classify_terminal_failure(
+        command="agy",
+        exit_status=1,
+        output=_AGY_QUOTA_OUTPUT,
+    )
+    assert diagnosis is not None
+    assert diagnosis.code == "quota_exhausted"
+    assert "quota" in diagnosis.title.lower()
+    assert diagnosis.remediation is not None
+    assert "different provider" in diagnosis.remediation.lower()
+
+
+def test_quota_exhaustion_has_a_plain_english_failure_description() -> None:
+    described = describe_failure_code("quota_exhausted")
+    assert described is not None
+    assert "quota" in described.lower()
+
+
 @pytest.mark.parametrize("code", ["native_turn_error", "codex_turn_error"])
 @pytest.mark.parametrize(
     "message",
