@@ -71,7 +71,7 @@ def upgrade() -> None:
         sa.Column("home_path", sa.String(1024), nullable=False),
         sa.Column("home_kind", sa.String(32), nullable=False, server_default="generic"),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
-        sa.Column("metadata", sa.Text(), nullable=True),
+        sa.Column("metadata", sa.LargeBinary(), nullable=True),
         sa.Column("created_at", sa.Integer(), nullable=False),
         sa.Column("updated_at", sa.Integer(), nullable=True),
         sa.PrimaryKeyConstraint("workspace_id", "id"),

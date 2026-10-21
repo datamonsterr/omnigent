@@ -38,6 +38,12 @@ def test_tables_at_head(tmp_path: Path) -> None:
         assert {"workspace_id", "id", "name", "harness", "description"} <= pool_columns
         account_columns = {c["name"] for c in inspector.get_columns("account_pool_accounts")}
         assert {"id", "pool_id", "home_path", "home_kind", "enabled"} <= account_columns
+        metadata_column = next(
+            column
+            for column in inspector.get_columns("account_pool_accounts")
+            if column["name"] == "metadata"
+        )
+        assert isinstance(metadata_column["type"], sa.LargeBinary)
         snapshot_columns = {c["name"] for c in inspector.get_columns("account_quota_snapshots")}
         assert {"id", "account_id", "model_family", "status"} <= snapshot_columns
     finally:

@@ -5708,6 +5708,11 @@
       },
       "ServerInfoResponse": {
         "properties": {
+          "account_pools_enabled": {
+            "default": false,
+            "title": "Account Pools Enabled",
+            "type": "boolean"
+          },
           "accounts_enabled": {
             "title": "Accounts Enabled",
             "type": "boolean"
