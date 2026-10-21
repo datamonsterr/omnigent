@@ -12,7 +12,10 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 from alembic import command
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 
+from omnigent.db.compression import decode, encode
 from omnigent.db.utils import (
     _build_alembic_config,
     clear_engine_cache,
@@ -101,6 +104,90 @@ def test_upgrade_from_either_branch_preserves_both_schemas(
         assert set(_TABLES) <= _table_names(engine)
         indexes = sa.inspect(engine).get_indexes("omnigent_conversation_metadata")
         assert "ix_conversation_metadata_host_id" in {index["name"] for index in indexes}
+    finally:
+        engine.dispose()
+        clear_engine_cache()
+
+
+def test_upgrade_converts_legacy_text_metadata_without_losing_annotations(
+    tmp_path: Path,
+) -> None:
+    """A database at the merged head with the historical TEXT column is repaired."""
+    uri = f"sqlite:///{tmp_path / 'legacy-metadata.db'}"
+    cfg = _build_alembic_config(uri)
+    engine = sa.create_engine(uri)
+    metadata = '{"note":"kept through upgrade"}'
+    try:
+        with engine.begin() as connection:
+            cfg.attributes["connection"] = connection
+            command.upgrade(cfg, "mp1a2b3c4d5e")
+            connection.execute(
+                sa.text(
+                    "INSERT INTO account_pool_accounts "
+                    "(workspace_id, id, pool_id, home_path, created_at, metadata) "
+                    "VALUES (0, 'codex-1', 'codex', '/accounts/codex-1', 1, :metadata)"
+                ),
+                {"metadata": metadata},
+            )
+            assert isinstance(
+                next(
+                    column
+                    for column in sa.inspect(connection).get_columns("account_pool_accounts")
+                    if column["name"] == "metadata"
+                )["type"],
+                sa.Text,
+            )
+            command.upgrade(cfg, "head")
+
+        column = next(
+            column
+            for column in sa.inspect(engine).get_columns("account_pool_accounts")
+            if column["name"] == "metadata"
+        )
+        assert isinstance(column["type"], sa.LargeBinary)
+        with engine.connect() as connection:
+            stored = connection.execute(
+                sa.text("SELECT metadata FROM account_pool_accounts WHERE id = 'codex-1'")
+            ).scalar_one()
+        assert decode(stored) == metadata
+    finally:
+        engine.dispose()
+        clear_engine_cache()
+
+
+def test_upgrade_keeps_metadata_from_already_binary_deployment(tmp_path: Path) -> None:
+    """The repair also accepts databases changed by the deployed migration."""
+    uri = f"sqlite:///{tmp_path / 'deployed-metadata.db'}"
+    cfg = _build_alembic_config(uri)
+    engine = sa.create_engine(uri)
+    metadata = '{"note":"already binary"}'
+    framed = encode(metadata)
+    try:
+        with engine.begin() as connection:
+            cfg.attributes["connection"] = connection
+            command.upgrade(cfg, "mp1a2b3c4d5e")
+            operations = Operations(MigrationContext.configure(connection))
+            with operations.batch_alter_table("account_pool_accounts") as batch:
+                batch.alter_column(
+                    "metadata",
+                    existing_type=sa.Text(),
+                    type_=sa.LargeBinary(),
+                    existing_nullable=True,
+                )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO account_pool_accounts "
+                    "(workspace_id, id, pool_id, home_path, created_at, metadata) "
+                    "VALUES (0, 'codex-1', 'codex', '/accounts/codex-1', 1, :metadata)"
+                ),
+                {"metadata": framed},
+            )
+            command.upgrade(cfg, "head")
+            stored = connection.execute(
+                sa.text("SELECT metadata FROM account_pool_accounts WHERE id = 'codex-1'")
+            ).scalar_one()
+        assert stored == framed
+        assert decode(stored) == metadata
     finally:
         engine.dispose()
         clear_engine_cache()
