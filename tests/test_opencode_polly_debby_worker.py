@@ -35,7 +35,7 @@ def test_debby_keeps_flagship_heads_separate_from_opencode_bench() -> None:
     assert "opencode" not in subs
     assert {"claude", "gpt"} <= set(subs)
     bench = {name for name in subs if name.startswith("opencode-")}
-    assert bench == {"opencode-kimi", "opencode-glm", "opencode-qwen"}
+    assert bench == {"opencode-minimax", "opencode-glm", "opencode-deepseek"}
     for name in bench:
         assert _config(subs[name]).get("harness") == "opencode-native"
     for name in ("claude", "gpt"):
