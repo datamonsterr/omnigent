@@ -50,6 +50,9 @@ describe("useDescendantSession", () => {
               session_name: "auth",
               current_task_status: "in_progress",
               busy: true,
+              account_id: "codex-2",
+              model: "actual-model",
+              reasoning_effort: "high",
             },
           ],
         }),
@@ -61,6 +64,11 @@ describe("useDescendantSession", () => {
 
     expect(result.current).toBeNull();
     await waitFor(() => expect(result.current?.task_summary).toBe("Investigate auth flow"));
+    expect(result.current).toMatchObject({
+      account_id: "codex-2",
+      model: "actual-model",
+      reasoning_effort: "high",
+    });
     expect(authenticatedFetch).toHaveBeenCalledWith("/v1/sessions/conv_parent/child_sessions");
   });
 });

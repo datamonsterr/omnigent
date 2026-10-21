@@ -110,6 +110,38 @@ describe("SettingsAccountsSection", () => {
     expect(screen.getByTestId("accounts-add-account-codex-native")).toBeTruthy();
   });
 
+  it.each([
+    ["codex-native", "codex_home"],
+    ["antigravity-native", "gemini_dir"],
+  ])("adds a %s account with its credential home kind", async (harness, homeKind) => {
+    const pool = { ...POOLS.data[0], harness, name: harness, accounts: [] };
+    const posted: unknown[] = [];
+    mockFetch((_url, init) => {
+      if (init?.method === "POST") posted.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ object: "list", data: [pool] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    render(
+      <TestWrapper>
+        <SettingsAccountsSection />
+      </TestWrapper>,
+    );
+    await screen.findByTestId(`accounts-pool-${harness}`);
+    await userEvent.type(screen.getByTestId(`accounts-new-account-id-${harness}`), "new-account");
+    await userEvent.type(
+      screen.getByTestId(`accounts-new-account-path-${harness}`),
+      "/accounts/new",
+    );
+    await userEvent.click(screen.getByTestId(`accounts-add-account-${harness}`));
+    await waitFor(() =>
+      expect(posted).toEqual([
+        { id: "new-account", home_path: "/accounts/new", home_kind: homeKind },
+      ]),
+    );
+  });
+
   it("disables an account", async () => {
     const calls: { url: string; method: string }[] = [];
     mockFetch((url, init) => {

@@ -44,3 +44,25 @@ def test_child_summary_strips_per_user_pin_keys() -> None:
     assert not any(k.startswith("omnigent.pinned") for k in summary.labels)
     # Unrelated labels are preserved.
     assert summary.labels.get("omni_project") == "Moonshot"
+
+
+def test_child_summary_exposes_actual_execution_settings() -> None:
+    """The rail receives the selected account, reported model, and effort."""
+    conv = _child({"omnigent.account.id": "codex-2"})
+    conv.model_override = "requested-model"
+    conv.reported_model = "actual-model"
+    conv.reasoning_effort = "high"
+    summary = _child_session_summary_from_conversation(conv, "conv_parent", None)
+    assert summary.account_id == "codex-2"
+    assert summary.model == "actual-model"
+    assert summary.reasoning_effort == "high"
+
+
+def test_child_summary_does_not_present_requested_model_as_actual() -> None:
+    """Before the harness reports a model, the actual model remains unknown."""
+    conv = _child({})
+    conv.model_override = "requested-model"
+    summary = _child_session_summary_from_conversation(conv, "conv_parent", None)
+    assert summary.account_id is None
+    assert summary.model is None
+    assert summary.reasoning_effort is None
