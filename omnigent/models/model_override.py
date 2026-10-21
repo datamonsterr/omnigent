@@ -14,6 +14,7 @@ import re
 from omnigent.harness_aliases import canonicalize_harness, is_native_harness
 from omnigent.harness_availability import CODEX_CANONICAL_HARNESSES
 from omnigent.harness_plugins import model_env_keys
+from omnigent.models.claude_model_vocabulary import CLAUDE_MODEL_ALIASES
 
 # Generous-but-safe upper bound; real ids ("databricks-claude-opus-4-8",
 # "us.anthropic.claude-sonnet-4-6") stay well under it.
@@ -148,12 +149,26 @@ def is_codex_compatible_model(model: str) -> bool:
     )
 
 
+def normalize_claude_model_alias(harness: str | None, model: str) -> str:
+    """Normalize short Claude family names without changing full model ids.
+
+    :param harness: Child harness whose model namespace is being used.
+    :param model: A validated model id or family alias.
+    :returns: The bare alias for Claude harnesses, otherwise the original id.
+    """
+    if canonicalize_harness(harness) not in _CLAUDE_FAMILY_HARNESSES:
+        return model
+    candidate = model.lower().removeprefix("claude-")
+    return candidate if candidate in CLAUDE_MODEL_ALIASES else model
+
+
 def model_family_mismatch(harness: str, model: str) -> str | None:
     """
     Return a rejection reason when *model*'s family cannot run on *harness*.
 
     Family is detected by vendor token: Claude ids contain ``"claude"``
-    (``databricks-claude-opus-4-8``); codex-compatible ids name gpt,
+    (``databricks-claude-opus-4-8``) or name a supported short family alias;
+    codex-compatible ids name gpt,
     codex, glm, or kimi (``databricks-gpt-5-4``, ``system.ai.glm-5-2``).
     Single-vendor harnesses reject the other family and ids whose family
     cannot be determined — failing loud at dispatch beats an opaque
@@ -171,14 +186,18 @@ def model_family_mismatch(harness: str, model: str) -> str | None:
     """
     canon = canonicalize_harness(harness)
     lower = model.lower()
-    is_claude = "claude" in lower
+    is_claude = "claude" in lower or (
+        canon in _CLAUDE_FAMILY_HARNESSES
+        and normalize_claude_model_alias(harness, model) in CLAUDE_MODEL_ALIASES
+    )
     # Antigravity's reject-list stays the narrow GPT/codex rule: GLM and Kimi
     # ids carry no Gemini-native verdict, so they are not newly excluded here.
     is_gpt = "gpt" in lower or "codex" in lower
     if canon in _CLAUDE_FAMILY_HARNESSES and not is_claude:
         return (
             f"harness {canon!r} only runs Claude models (id containing "
-            f"'claude'); got {model!r}. Use the codex worker for GPT / GLM / "
+            f"'claude' or a supported family alias); got {model!r}. "
+            "Use the codex worker for GPT / GLM / "
             "Kimi models or the pi / openai-agents worker for any other "
             "gateway model."
         )
