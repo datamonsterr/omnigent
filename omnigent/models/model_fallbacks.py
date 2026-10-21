@@ -244,3 +244,160 @@ BACKGROUND_TITLE_CLAUDE_ECONOMY_MODEL = _BACKGROUND_TITLE_FALLBACKS["claude"].mo
 
 #: The codex-family arm background session titles pin.
 BACKGROUND_TITLE_CODEX_ECONOMY_MODEL = _BACKGROUND_TITLE_FALLBACKS["codex"].model_ids[0]
+
+
+# OpenCode's effort dial uses a curated ranking unavailable in model discovery.
+_OPENCODE_HAIKU_FAMILY = StaticModelFallback(
+    model_ids=("claude-haiku",),
+    owner="OpenCode effort routing",
+    provenance="Family prefix used by the fork's OpenCode effort dial",
+    discovery_gap="Model discovery lists ids without their effort-family grouping",
+)
+
+_OPENCODE_DEFAULT_TIERS = StaticModelFallback(
+    model_ids=(
+        "opencode-go/longcat-2.5-preview-free",
+        "opencode-go/deepseek-v4-flash",
+        "opencode-go/muse-spark-1.3-contributor",
+    ),
+    owner="OpenCode effort routing",
+    provenance="Fork-curated low, medium, and high effort defaults",
+    discovery_gap="Model discovery does not rank the operator's effort tiers",
+)
+
+_OPENCODE_FAMILY_TIERS: dict[str, StaticModelFallback] = {
+    "deepseek": StaticModelFallback(
+        model_ids=(
+            "opencode-go/deepseek-v4-flash",
+            "opencode-go/deepseek-v4.1-flash",
+            "opencode-go/deepseek-v4-pro",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "muse-spark": StaticModelFallback(
+        model_ids=(
+            "opencode-go/muse-spark-1.2-contributor",
+            "opencode-go/muse-spark-1.2-contributor",
+            "opencode-go/muse-spark-1.3-contributor",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "kimi": StaticModelFallback(
+        model_ids=(
+            "opencode-go/kimi-k2.7-code",
+            "opencode-go/kimi-k2.7-code",
+            "opencode-go/kimi-k3",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "glm": StaticModelFallback(
+        model_ids=("opencode-go/glm-5.3-flash", "opencode-go/glm-5.2", "opencode-go/glm-5.3"),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "gpt": StaticModelFallback(
+        model_ids=(
+            "opencode-go/gpt-5.6-luna",
+            "opencode-go/gpt-5.6-luna",
+            "opencode-go/gpt-6-luna",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "grok": StaticModelFallback(
+        model_ids=("opencode-go/grok-4.6", "opencode-go/grok-4.6", "opencode-go/grok-4.7"),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "longcat": StaticModelFallback(
+        model_ids=(
+            "opencode-go/longcat-2.0",
+            "opencode-go/longcat-2.5-preview-free",
+            "opencode-go/longcat-2.5-preview-free",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "mimo": StaticModelFallback(
+        model_ids=(
+            "opencode-go/mimo-v2.5",
+            "opencode-go/mimo-v2.6-flash",
+            "opencode-go/mimo-v2.6-pro",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "minimax": StaticModelFallback(
+        model_ids=(
+            "opencode-go/minimax-m2.7",
+            "opencode-go/minimax-m2.7",
+            "opencode-go/minimax-m3",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "qwen": StaticModelFallback(
+        model_ids=(
+            "opencode-go/qwen3.8-flash",
+            "opencode-go/qwen3.7-plus",
+            "opencode-go/qwen3.8-max",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "hy": StaticModelFallback(
+        model_ids=("opencode-go/hy3", "opencode-go/hy4-preview", "opencode-go/hy4-preview"),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    _OPENCODE_HAIKU_FAMILY.model_ids[0]: StaticModelFallback(
+        model_ids=(
+            "opencode-go/claude-haiku-5-5",
+            "opencode-go/claude-haiku-5-5",
+            "opencode-go/claude-haiku-5-5",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+    "space-bunny": StaticModelFallback(
+        model_ids=(
+            "opencode-go/space-bunny",
+            "opencode-go/space-bunny",
+            "opencode-go/space-bunny",
+        ),
+        owner="OpenCode effort routing",
+        provenance="Fork-curated low, medium, and high effort family tiers",
+        discovery_gap="Model discovery does not rank the operator's effort tiers",
+    ),
+}
+
+OPENCODE_EFFORT_DEFAULT_TIER = dict(
+    zip(("low", "medium", "high"), _OPENCODE_DEFAULT_TIERS.model_ids, strict=True)
+)
+OPENCODE_EFFORT_FAMILY_TIERS = {
+    family: dict(zip(("low", "medium", "high"), fallback.model_ids, strict=True))
+    for family, fallback in _OPENCODE_FAMILY_TIERS.items()
+}
+
+_ANTIGRAVITY_SUPPORTED_MODELS = StaticModelFallback(
+    model_ids=("claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"),
+    owner="Antigravity model validation",
+    provenance="Non-Gemini model ids supported by the native Antigravity catalog",
+    discovery_gap="Spec validation runs before a host model catalog is available",
+)
+ANTIGRAVITY_SUPPORTED_MODELS = frozenset(_ANTIGRAVITY_SUPPORTED_MODELS.model_ids)
