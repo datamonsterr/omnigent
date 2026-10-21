@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  accountPoolHarness,
   accountQuotaSummary,
   poolForHarness,
   selectableAccounts,
@@ -65,6 +66,18 @@ describe("poolForHarness", () => {
   it("returns null for a harness without a pool", () => {
     expect(poolForHarness([POOL], "claude-native")).toBeNull();
     expect(poolForHarness([POOL], null)).toBeNull();
+  });
+});
+
+describe("accountPoolHarness", () => {
+  it("maps an SDK harness onto its native account family", () => {
+    expect(accountPoolHarness("codex")).toBe("codex-native");
+  });
+
+  it("returns null for SDK harnesses without an account family", () => {
+    expect(accountPoolHarness("claude-sdk")).toBeNull();
+    expect(accountPoolHarness("auto")).toBeNull();
+    expect(accountPoolHarness(null)).toBeNull();
   });
 });
 

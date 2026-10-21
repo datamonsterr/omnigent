@@ -12,10 +12,10 @@ from typing import Any
 import yaml
 from fastapi import HTTPException
 
+from omnigent.account_pools.manager import AGENT_ACCOUNT_CONFIG_KEY
 from omnigent.entities import Agent
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harness_aliases import canonicalize_harness
-from omnigent.server.auth import local_single_user_enabled
 from omnigent.server.bundles import validate_agent_bundle
 from omnigent.server.routes.session_mcp_servers import (
     _find_mcp_location,
@@ -172,8 +172,7 @@ def edit_agent_bundle(bundle: bytes, patch: AgentConfigPatch | None) -> tuple[by
 
 
 def _edit_agent_bundle(bundle: bytes, patch: AgentConfigPatch | None) -> tuple[bytes, AgentSpec]:
-    enforce_handlers = not local_single_user_enabled()
-    spec = validate_agent_bundle(bundle, enforce_handler_allowlist=enforce_handlers)
+    spec = validate_agent_bundle(bundle, enforce_handler_allowlist=True)
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir) / "agent"
         extract_safe(bundle, root)
@@ -190,9 +189,11 @@ def _edit_agent_bundle(bundle: bytes, patch: AgentConfigPatch | None) -> tuple[b
 
         if "description" in fields and patch.description != spec.description:
             config["description"] = patch.description
-        if fields & {"model", "harness"}:
+        if fields & {"model", "harness", "account_id"}:
             if spec.executor.type != "omnigent":
-                raise _not_editable("Model and harness edits require executor.type: omnigent")
+                raise _not_editable(
+                    "Model, harness, and account edits require executor.type: omnigent"
+                )
             executor = dict(config.get("executor") or {})
             if "model" in fields and patch.model != spec.executor.model:
                 executor["model"] = patch.model
@@ -209,6 +210,14 @@ def _edit_agent_bundle(bundle: bytes, patch: AgentConfigPatch | None) -> tuple[b
                     current if str(current).startswith("acp:") else canonicalize_harness(current)
                 ):
                     executor["config"] = {**(executor.get("config") or {}), "harness": harness}
+            if "account_id" in fields:
+                executor_config = dict(executor.get("config") or {})
+                if patch.account_id is None:
+                    executor_config.pop(AGENT_ACCOUNT_CONFIG_KEY, None)
+                else:
+                    executor_config[AGENT_ACCOUNT_CONFIG_KEY] = patch.account_id.strip()
+                if executor_config != (executor.get("config") or {}):
+                    executor["config"] = executor_config
             if executor != (config.get("executor") or {}):
                 config["executor"] = executor
         if "instructions" in fields:
@@ -234,7 +243,7 @@ def _edit_agent_bundle(bundle: bytes, patch: AgentConfigPatch | None) -> tuple[b
             config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
         result = _tar_gz_dir(root, original_bundle=bundle)
-        updated = validate_agent_bundle(result, enforce_handler_allowlist=enforce_handlers)
+        updated = validate_agent_bundle(result, enforce_handler_allowlist=True)
         if updated.name != spec.name or updated.executor.type != spec.executor.type:
             raise OmnigentError("Agent identity cannot change", code=ErrorCode.INVALID_INPUT)
         for server in updated.mcp_servers:
@@ -267,6 +276,7 @@ def _agent_config_object(agent: Agent, spec: AgentSpec) -> AgentConfigObject:
         description=agent.description if agent.description is not None else spec.description,
         harness=spec.executor.harness_kind,
         model=spec.executor.model,
+        account_id=_agent_account_id(spec),
         instructions=spec.instructions,
         mcp_servers={
             server.name: AgentMCPConfig(
@@ -282,3 +292,9 @@ def _agent_config_object(agent: Agent, spec: AgentSpec) -> AgentConfigObject:
             for server in spec.mcp_servers
         },
     )
+
+
+def _agent_account_id(spec: AgentSpec) -> str | None:
+    """Return the agent's default account id, or ``None`` for automatic selection."""
+    value = spec.executor.config.get(AGENT_ACCOUNT_CONFIG_KEY)
+    return value if isinstance(value, str) and value else None

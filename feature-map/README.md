@@ -113,6 +113,9 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
 
 ## Features
 
+- [Workspace content search](./workspace-content-search.md) covers runner-backed
+  text search, result navigation and its release flag.
+
 - [Harness acceptance](./harness-acceptance.md) standardizes the SDK/native
   checklist, connects existing bench probes to user journeys, and records
   per-harness coverage gaps separately from observed results.
@@ -138,6 +141,8 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
   authentication for project writes.
 - [Sessions](./sessions.md) covers the sidebar, whole-session and message forks,
   custom-agent targets, fork access checks, archive, reconnect, and resume.
+- [Video recordings](./video-rendering.md) covers inline chat playback, remote
+  recording links, file previews, and download fallbacks.
 
 - [GitLab merge requests](./gitlab.md) covers the shared MR panel, composer,
   Canvas links, and native tracking.
@@ -167,7 +172,8 @@ map an area, remove it here in the same change.
   terminal journeys are mapped)
 - Approvals, permission cards, and the inbox: `tests/e2e_ui/approvals/` (only
   native edit-tool approvals are mapped)
-- Sub-agents and the agent info popover: `tests/e2e_ui/agents/`
+- Sub-agents and the agent info popover: `tests/e2e_ui/agents/` (only Claude-native
+  discovery and idle-runner performance are mapped in Native harnesses)
 - Files and the workspace browser: `tests/e2e_ui/files/`, `tests/browser_ui/files/`
 - Comments: `tests/e2e_ui/comments/`
 - Sharing and session permissions: `tests/e2e_ui/collaboration/`

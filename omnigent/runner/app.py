@@ -38,6 +38,7 @@ import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from omnigent.account_pools.labels import CODEX_HOME_LABEL_KEY
 from omnigent.acp_cli_harnesses import ACP_CLI_HARNESSES
 from omnigent.debug_logging import (
     debug_event,
@@ -190,11 +191,13 @@ from omnigent.runner.subagent_work import (
     _truncate_child_preview,
     get_subagent_work,
     is_codex_native_subagent_wrapper,
+    latest_wake_eligible_subagent_work,
     list_subagent_work,
     mark_subagent_work_started,
     mark_subagent_work_terminal,
     unregister_child_session,
     unregister_subagent_work_for_session,
+    wrapper_label_from_labels,
 )
 from omnigent.runtime.harnesses.process_manager import HarnessProcessManager, NoLiveHarnessError
 from omnigent.runtime.prompt import (
@@ -515,6 +518,14 @@ class _SessionSnapshot:
         ``"cursor-native-ui"``. Used as the sub-agent label when rebuilding a
         work entry for a child the server did not record a ``sub_agent_name``
         for. ``None`` when unbound / the fetch failed.
+    :param codex_home: The session's account Codex home from its labels,
+        e.g. ``"/home/user/.codex-acc2"``. The SDK ``codex`` harness reads
+        auth and config from it. ``None`` uses the runner's own home.
+    :param wrapper_label: The child's ``omnigent.wrapper`` label, e.g.
+        ``"codex-native-ui-subagent"`` for a Codex-owned thread. Carried into
+        a rebuilt work entry so wake suppression keyed on the child's
+        ownership survives a reconnect / restart. ``None`` when unlabelled /
+        the fetch failed.
     """
 
     ok: bool
@@ -525,6 +536,22 @@ class _SessionSnapshot:
     sub_agent_name: str | None = None
     parent_session_id: str | None = None
     agent_name: str | None = None
+    wrapper_label: str | None = None
+    codex_home: str | None = None
+
+
+def _codex_home_from_labels(labels: object) -> str | None:
+    """Return the session's account Codex home from its labels, if any.
+
+    Reads the same keys as the native Codex launch config.
+
+    :param labels: The session's label mapping, or anything else.
+    :returns: The Codex home path, or ``None`` when unset.
+    """
+    if not isinstance(labels, Mapping):
+        return None
+    value = labels.get(CODEX_HOME_LABEL_KEY) or labels.get("codex_home")
+    return value if isinstance(value, str) and value else None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1990,6 +2017,8 @@ def create_runner_app(
             sub_agent_name: str | None = None
             parent_session_id: str | None = None
             agent_name: str | None = None
+            codex_home: str | None = None
+            wrapper_label: str | None = None
             try:
                 resp = await server_client.get(
                     f"/v1/sessions/{session_id}", params=_SESSION_METADATA_PARAMS
@@ -2013,6 +2042,8 @@ def create_runner_app(
                     raw_agent_name = body.get("agent_name")
                     if isinstance(raw_agent_name, str) and raw_agent_name:
                         agent_name = raw_agent_name
+                    codex_home = _codex_home_from_labels(body.get("labels"))
+                    wrapper_label = wrapper_label_from_labels(body.get("labels"))
             except Exception:  # noqa: BLE001 — best-effort; created_at falls back to wall time
                 pass
             snapshot = _SessionSnapshot(
@@ -2024,6 +2055,8 @@ def create_runner_app(
                 sub_agent_name=sub_agent_name,
                 parent_session_id=parent_session_id,
                 agent_name=agent_name,
+                codex_home=codex_home,
+                wrapper_label=wrapper_label,
             )
             if snapshot.ok and snapshot.agent_id is not None:
                 if _session_cache_generation_is_current(session_id, generation):
@@ -2076,6 +2109,9 @@ def create_runner_app(
             )
         return None
 
+    async def _session_codex_home(session_id: str) -> str | None:
+        return (await _session_snapshot(session_id)).codex_home
+
     async def _session_runtime_cwd(session_id: str) -> Path | None:
         workspace = await _session_workspace_value(session_id)
         if workspace and workspace.strip():
@@ -2109,6 +2145,8 @@ def create_runner_app(
             agent_id=agent_id,
             sub_agent_name=envelope.sub_agent_name,
             parent_session_id=snapshot.parent_session_id,
+            codex_home=_codex_home_from_labels(snapshot.labels),
+            wrapper_label=wrapper_label_from_labels(snapshot.labels),
         )
         _session_start_cache[session_id] = float(snapshot.created_at)
         _session_workspace_cache[session_id] = snapshot.workspace
@@ -2128,6 +2166,21 @@ def create_runner_app(
             return envelope
         _session_init_envelopes.pop(session_id, None)
         return None
+
+    async def _rebind_claude_bridge(session_id: str, bridge_id: str) -> None:
+        """Point a session's cached init labels and harness at its new Claude bridge.
+
+        :param session_id: Session whose terminal launch moved its bridge dir.
+        :param bridge_id: The bridge id the new pane was launched under.
+        """
+        from omnigent.harnesses.claude_native.bridge import BRIDGE_ID_LABEL_KEY
+
+        cached = _session_init_envelopes.get(session_id)
+        if cached is not None:
+            cached[1].snapshot.labels[BRIDGE_ID_LABEL_KEY] = bridge_id
+        # The next turn respawns the harness with the new bridge dir.
+        if process_manager is not None:
+            await process_manager.release(session_id)
 
     async def _load_session_init_context(
         body: _JsonObject,
@@ -2279,6 +2332,7 @@ def create_runner_app(
                 harness_override=body.harness_override,
                 sub_agent_name=sub_agent_name,
                 cwd=resolver_cwd,
+                codex_home=await _session_codex_home(conversation_id),
             )
             generator_spec = generator_spec_for_harness(effective_harness)
             if generator_spec is None:
@@ -2294,6 +2348,7 @@ def create_runner_app(
                     harness_override=resolver_harness,
                     sub_agent_name=sub_agent_name,
                     cwd=resolver_cwd,
+                    codex_home=await _session_codex_home(conversation_id),
                 )
                 if resolved_harness != resolver_harness:
                     return BackgroundSessionTitleResponse(status="unsupported")
@@ -2565,6 +2620,7 @@ def create_runner_app(
                     session_id=session_id,
                     model_override=_model_override,
                     resource_registry=resource_registry,
+                    codex_home=await _session_codex_home(session_id),
                 )
             except OmnigentError as exc:
                 # The relay also needs the failure when init precedes the first turn.
@@ -2710,6 +2766,7 @@ def create_runner_app(
                 server_client=server_client,
                 event_dispatcher=getattr(app.state, "runner_event_dispatcher", None),
                 ensure_comment_relay=_ensure_comment_relay_started,
+                rebind_bridge=_rebind_claude_bridge,
             )
             _launch_pre: Callable[[bool], Awaitable[PreLaunchResult]] | None = None
             _launch_build: (
@@ -4417,15 +4474,9 @@ def create_runner_app(
     def _schedule_subagent_wake(entry: _SubagentWorkEntry, *, is_rewake: bool = False) -> None:
         if entry.parent_session_id == entry.child_session_id:
             return
-        # A codex-native sub-agent (a /side side chat, or one codex spawned) is a
-        # thread in the parent's own app-server, so its completion is not the
-        # parent's to collect — waking the parent would inject an inbox notice
-        # into a chat the user is reading. The wrapper label is only set by the
-        # spawn-tool path, so a forwarder-registered child is caught by the
-        # parent's harness instead.
-        if is_codex_native_subagent_wrapper(entry.wrapper_label) or (
-            _session_harness_name(entry.parent_session_id) == _CODEX_NATIVE_HARNESS
-        ):
+        # Codex owns its internal threads and /side chats. Independent Omnigent
+        # workers still owe an inbox wake, even when their parent runs Codex.
+        if is_codex_native_subagent_wrapper(entry.wrapper_label):
             return
         inbox = _session_inboxes.get(entry.parent_session_id)
         if inbox is None:
@@ -4475,13 +4526,9 @@ def create_runner_app(
         _stranded_wake_parents.discard(parent_session_id)
         if drained:
             return
-        entries = list_subagent_work(parent_session_id)
-        if not entries:
+        latest = latest_wake_eligible_subagent_work(list_subagent_work(parent_session_id))
+        if latest is None:
             return
-        latest = max(
-            entries,
-            key=lambda entry: entry.completed_at if entry.completed_at is not None else 0.0,
-        )
         _schedule_subagent_wake(latest, is_rewake=True)
 
     async def _retry_stranded_wakes_soon() -> None:
@@ -4500,15 +4547,9 @@ def create_runner_app(
                 inbox = _session_inboxes.get(parent_id)
                 if inbox is None or inbox.empty():
                     continue
-                entries = list_subagent_work(parent_id)
-                if not entries:
+                latest = latest_wake_eligible_subagent_work(list_subagent_work(parent_id))
+                if latest is None:
                     continue
-                latest = max(
-                    entries,
-                    key=lambda entry: (
-                        entry.completed_at if entry.completed_at is not None else 0.0
-                    ),
-                )
                 _logger.info(
                     "Re-attempting stranded sub-agent wake for parent=%s after reconnect",
                     parent_id,
@@ -5043,6 +5084,7 @@ def create_runner_app(
                 model_override=cast(str | None, msg_body.get("model_override")),
                 session_id=conv,
                 resource_registry=resource_registry,
+                codex_home=await _session_codex_home(conv),
             )
             # Gated harnesses use nullable to avoid the fallback literal.
             _authored_bg = raw_author_instructions(cached_spec) is not None
@@ -5443,6 +5485,7 @@ def create_runner_app(
                     ),
                     sub_agent_name=_sub_agent_name,
                     cwd=await _session_runtime_cwd(conv_id),
+                    codex_home=await _session_codex_home(conv_id),
                 )
             except SessionAgentMissingError:
                 return JSONResponse(
@@ -7278,6 +7321,7 @@ def create_runner_app(
         _pi_terminal_ensure_locks=_pi_terminal_ensure_locks,
         _publish_event=_publish_event,
         _qwen_terminal_ensure_locks=_qwen_terminal_ensure_locks,
+        _rebind_claude_bridge=_rebind_claude_bridge,
         _record_session_claude_launch_config=_record_session_claude_launch_config,
         _repl_terminal_ensure_locks=_repl_terminal_ensure_locks,
         _repop_pending_cost_popup_on_attach=_repop_pending_cost_popup_on_attach,
@@ -7900,6 +7944,7 @@ async def _resolve_harness_config(
     sub_agent_name: str | None = None,
     cwd: Path | None = None,
     resource_registry: SessionResourceRegistry | None = None,
+    codex_home: str | None = None,
 ) -> tuple[str, dict[str, str] | None]:
     """Resolve harness type + spawn-env from the agent spec.
 
@@ -7922,6 +7967,8 @@ async def _resolve_harness_config(
         so the spawn-env advertises the child's bundle rather than the
         parent's. ``None`` for top-level sessions.
     :param cwd: Runtime working directory for harnesses that need it.
+    :param codex_home: The session's account Codex home for the SDK
+        ``codex`` harness, or ``None``.
     :returns: ``(harness, spawn_env)`` derived from the resolved spec.
     :raises RuntimeError: When a spec_resolver is configured but the spec
         cannot be resolved. Callers catch this to surface a clean error
@@ -7961,6 +8008,7 @@ async def _resolve_harness_config(
                 model_override=model_override,
                 session_id=session_id,
                 resource_registry=resource_registry,
+                codex_home=codex_home,
             )
             return harness, spawn_env
 
@@ -8079,6 +8127,7 @@ def _build_spawn_env_from_spec(
     model_override: str | None = None,
     session_id: str | None = None,
     resource_registry: SessionResourceRegistry | None = None,
+    codex_home: str | None = None,
 ) -> dict[str, str] | None:
     """Build spawn-env from spec — mirrors workflow.py's helpers.
 
@@ -8096,6 +8145,9 @@ def _build_spawn_env_from_spec(
         via ``--model`` in :func:`_build_claude_native_base_args`; the
         SDK harnesses have no such arg, so the override must land in the
         env var here.)
+    :param codex_home: The session's account Codex home. The SDK ``codex``
+        harness reads auth and config from it instead of the runner's own
+        ``CODEX_HOME``. ``None`` keeps the runner's home.
     :returns: The spawn-env dict, or ``None`` for native / unknown harnesses.
     """
     # Namespaced generic-ACP ids (``acp:<slug>``) canonicalize to ``acp`` so the
@@ -8187,6 +8239,8 @@ def _build_spawn_env_from_spec(
                 if resource_registry is not None and session_id is not None
                 else ""
             )
+            if codex_home:
+                env["CODEX_HOME"] = str(Path(codex_home).expanduser())
         elif harness == "pi":
             env = _build_pi_spawn_env(effective_spec, cwd=cwd, workdir=workdir)
         elif harness == "openai-agents":

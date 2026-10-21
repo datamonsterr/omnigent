@@ -192,6 +192,8 @@ class AgentConfigPatch(BaseModel):
     instructions: str | None = None
     model: str | None = Field(default=None, min_length=1)
     harness: str | None = Field(default=None, min_length=1)
+    #: The agent's default harness account; ``null`` clears it (automatic pick).
+    account_id: str | None = Field(default=None, min_length=1, max_length=256)
     mcp_servers: (
         dict[Annotated[str, Field(pattern=_MCP_SERVER_NAME_RE)], MCPServerPatch | None] | None
     ) = None
@@ -201,9 +203,9 @@ class AgentConfigPatch(BaseModel):
         for key in ("model", "harness", "mcp_servers"):
             if key in self.model_fields_set and getattr(self, key) is None:
                 raise ValueError(f"{key} cannot be null")
-        for value in (self.model, self.harness):
+        for value in (self.model, self.harness, self.account_id):
             if value is not None and not value.strip():
-                raise ValueError("Model and harness must be nonempty")
+                raise ValueError("Model, harness, and account must be nonempty")
         return self
 
 
@@ -229,6 +231,7 @@ class AgentConfigObject(BaseModel):
     description: str | None = None
     harness: str | None = None
     model: str | None = None
+    account_id: str | None = None
     instructions: str | None = None
     mcp_servers: dict[str, AgentMCPConfig] = Field(default_factory=dict)
 
@@ -930,6 +933,9 @@ class ChildSessionSummary(BaseModel):
     last_task_error: dict[str, str] | None = None
     last_message_preview: str | None = None
     pending_elicitations_count: int = 0
+    account_id: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
     routed_model: str | None = None
     routing_decision_id: str | None = None
 
@@ -1402,6 +1408,31 @@ class SessionEventInput(BaseModel):
         return data
 
 
+class SessionStartupInput(SessionEventInput):
+    """A first user input the server accepts durably before provisioning a host."""
+
+    @model_validator(mode="after")
+    def _validate_startup_input(self) -> Self:
+        from omnigent.entities.conversation import MessageData
+
+        if self.type not in ("message", "slash_command"):
+            raise ValueError("initial_input must be a message or skill invocation")
+        if self.created_by is not None:
+            raise ValueError("initial_input attribution comes from the authenticated creator")
+        if self.type == "message":
+            message = MessageData.model_validate(self.data)
+            if message.role != "user":
+                raise ValueError("initial_input must be a user message")
+        elif (
+            self.data.get("kind") != "skill"
+            or not isinstance(self.data.get("name"), str)
+            or not self.data["name"].strip()
+            or not isinstance(self.data.get("arguments", ""), str)
+        ):
+            raise ValueError("initial_input slash_command requires a skill name and arguments")
+        return self
+
+
 class SessionGitOptions(BaseModel):
     """
     Git worktree options for ``POST /v1/sessions``.
@@ -1636,6 +1667,7 @@ class _SessionCreateRequestBase(BaseModel):
     agent_id: Any
     project_id: str | None = None
     initial_items: list[SessionEventInput] = Field(default_factory=list)
+    initial_input: SessionStartupInput | None = None
     mcp_registry_services: list[McpRegistryServiceId] = Field(default_factory=list, max_length=40)
     title: str | None = Field(default=None, max_length=USER_SESSION_TITLE_MAX_CHARS)
     labels: dict[str, str] = Field(default_factory=dict)
@@ -1657,6 +1689,15 @@ class _SessionCreateRequestBase(BaseModel):
     subagent_routing_override: str | None = None
     harness_override: str | None = None
     smart_routing_message: str | None = None
+
+    @model_validator(mode="after")
+    def _check_startup_input(self) -> Self:
+        if self.initial_input is not None and (self.host_type != "managed" or self.initial_items):
+            raise ValueError(
+                "initial_input requires host_type=managed "
+                "and cannot be combined with initial_items"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_git_requires_host(self) -> Self:
@@ -1882,6 +1923,14 @@ class SessionCreateMetadata(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    initial_input: SessionStartupInput | None = None
+
+    @model_validator(mode="after")
+    def _check_startup_input(self) -> Self:
+        if self.initial_input is not None and self.host_type != "managed":
+            raise ValueError("initial_input requires host_type=managed")
+        return self
+
     @model_validator(mode="after")
     def _check_managed_bundle_fields(self) -> SessionCreateMetadata:
         """
@@ -2006,6 +2055,18 @@ class SandboxStatus(BaseModel):
     stage: SandboxLaunchStage
     error: str | None = None
     provider: str | None = None
+
+
+class NativeUsageBaseline(BaseModel):
+    """Own-session cumulative tokens for resuming a native usage reporter.
+
+    Excludes spawned sessions. Input includes cache reads, matching the native
+    usage event contract rather than the display's separate token buckets.
+    """
+
+    cumulative_input_tokens: int = Field(default=0, ge=0)
+    cumulative_output_tokens: int = Field(default=0, ge=0)
+    cumulative_cache_read_input_tokens: int = Field(default=0, ge=0)
 
 
 class ModelUsage(BaseModel):
@@ -2232,6 +2293,9 @@ class SessionResponse(BaseModel):
         them with a separate ``GET /v1/sessions/{id}`` using
         ``include_usage=true``, ``include_items=false``,
         ``include_liveness=false``, and ``refresh_state=false``.
+    :param native_usage_baseline: Pi's own cumulative token baseline, excluding
+        descendants. Available even when display usage aggregation is skipped;
+        ``None`` for other harnesses or older servers.
     :param last_task_error: Error details from the most recently
         failed task. Only present when ``status == "failed"`` and
         the task stored an error. Lets clients display the failure
@@ -2262,15 +2326,13 @@ class SessionResponse(BaseModel):
         Empty list when no prompts are outstanding. Sourced from
         the Omnigent server's in-memory
         :mod:`omnigent.runtime.pending_elicitations` index.
-    :param pending_inputs: Un-consumed web-composer user messages on
-        native-terminal (claude-native / codex-native) sessions at
-        snapshot time, each ``{"pending_id", "content"}``. Native
-        sessions don't persist a web message at POST time (the
-        transcript forwarder is the single writer), so a client that
-        posted then navigated away / rebound would lose its optimistic
-        bubble; replaying these re-hydrates it. Empty list otherwise.
-        Sourced from the in-memory
-        :mod:`omnigent.runtime.pending_inputs` index.
+    :param pending_inputs: Accepted messages awaiting consumption, each
+        ``{"pending_id", "content"}``. Includes durable managed-startup
+        inputs and native messages awaiting a transcript receipt. Clients
+        restore their pending bubbles from this list after reconnecting.
+        Ordinary native sends use the in-memory
+        :mod:`omnigent.runtime.pending_inputs` index; startup inputs also
+        survive server restart in the conversation store.
     :param workspace: Absolute path on disk where the runner cd's,
         e.g. ``"/Users/corey/universe/src/foo"``. Set when the
         session was bound to a host workspace at create-time, or
@@ -2361,17 +2423,13 @@ class SessionResponse(BaseModel):
     total_cost_usd: float | None = None
     usage_by_model: dict[str, ModelUsage] | None = None
     usage_included: bool = True
+    native_usage_baseline: NativeUsageBaseline | None = None
     last_task_error: dict[str, str] | None = None
     external_session_id: str | None = None
     terminal_launch_args: list[str] | None = None
     pending_elicitations: list[dict[str, Any]] = Field(default_factory=list)
-    # Un-consumed web-composer user messages on native-terminal
-    # sessions at snapshot time, each ``{"pending_id", "content"}``.
-    # Replayed so a client that posted a message then navigated away /
-    # rebound re-hydrates the optimistic bubble (the live SSE stream
-    # has no replay). Empty for non-native sessions, which persist the
-    # message at POST time and thus already carry it in ``items``.
-    # Source: :mod:`omnigent.runtime.pending_inputs`.
+    # Durable startup inputs plus ordinary native inputs awaiting a receipt.
+    # Each {"pending_id", "content"} restores a pending bubble on reconnect.
     pending_inputs: list[dict[str, Any]] = Field(default_factory=list)
     workspace: str | None = None
     git_branch: str | None = None
@@ -2430,7 +2488,7 @@ class UpdateSessionRequest(BaseModel):
         ``"plan"`` enters Plan mode and ``"default"`` returns to Default
         mode for subsequent Codex turns. Only valid for sessions stamped
         with the codex-native wrapper label. Omitted leaves unchanged.
-    :param permission_mode: Claude-native permission mode to switch a
+    :param permission_mode: Owner-only Claude-native permission mode to switch a
         running session to, e.g. ``"auto"``. Only the modes Claude Code's
         shift+tab cycle can reach are accepted (``default``,
         ``acceptEdits``, ``plan``, ``auto``) — ``dontAsk`` and
@@ -2479,6 +2537,7 @@ class UpdateSessionRequest(BaseModel):
         surface programmer errors. ``None`` leaves unchanged.
     :param terminal_launch_args: Per-session native-terminal
         pass-through args, e.g. ``["--dangerously-skip-permissions"]``.
+        Updating this field requires session ownership.
         A list (including ``[]``) replaces the stored value wholesale
         — resume is last-write-wins, never an append. Bounds (count /
         length) are validated server-side. ``None`` leaves unchanged.

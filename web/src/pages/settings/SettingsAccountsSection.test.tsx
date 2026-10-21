@@ -63,11 +63,12 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Response) {
 
 describe("SettingsAccountsSection", () => {
   it("lists the pools, their accounts, and the usage totals", async () => {
-    mockFetch(() =>
-      new Response(JSON.stringify(POOLS), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+    mockFetch(
+      () =>
+        new Response(JSON.stringify(POOLS), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
     render(
       <TestWrapper>
@@ -84,11 +85,12 @@ describe("SettingsAccountsSection", () => {
   });
 
   it("stays usable on a narrow viewport", async () => {
-    mockFetch(() =>
-      new Response(JSON.stringify(POOLS), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+    mockFetch(
+      () =>
+        new Response(JSON.stringify(POOLS), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
     );
     // A mobile viewport: the section must not depend on a wide layout.
     window.innerWidth = 390;
@@ -106,6 +108,38 @@ describe("SettingsAccountsSection", () => {
     expect(screen.getByTestId("accounts-toggle-codex-acc1")).toBeTruthy();
     expect(screen.getByTestId("accounts-remove-codex-acc1")).toBeTruthy();
     expect(screen.getByTestId("accounts-add-account-codex-native")).toBeTruthy();
+  });
+
+  it.each([
+    ["codex-native", "codex_home"],
+    ["antigravity-native", "gemini_dir"],
+  ])("adds a %s account with its credential home kind", async (harness, homeKind) => {
+    const pool = { ...POOLS.data[0], harness, name: harness, accounts: [] };
+    const posted: unknown[] = [];
+    mockFetch((_url, init) => {
+      if (init?.method === "POST") posted.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ object: "list", data: [pool] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    render(
+      <TestWrapper>
+        <SettingsAccountsSection />
+      </TestWrapper>,
+    );
+    await screen.findByTestId(`accounts-pool-${harness}`);
+    await userEvent.type(screen.getByTestId(`accounts-new-account-id-${harness}`), "new-account");
+    await userEvent.type(
+      screen.getByTestId(`accounts-new-account-path-${harness}`),
+      "/accounts/new",
+    );
+    await userEvent.click(screen.getByTestId(`accounts-add-account-${harness}`));
+    await waitFor(() =>
+      expect(posted).toEqual([
+        { id: "new-account", home_path: "/accounts/new", home_kind: homeKind },
+      ]),
+    );
   });
 
   it("disables an account", async () => {

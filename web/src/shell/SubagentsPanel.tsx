@@ -450,6 +450,11 @@ function MainRow({ rootSessionId, isActive }: { rootSessionId: string; isActive:
               </span>
               <span className="min-w-0 truncate text-base font-semibold">{label}</span>
             </div>
+            <ExecutionChips
+              account={session?.labels?.["omnigent.account.id"] ?? session?.labels?.account_id}
+              model={session?.llmModel}
+              effort={session?.reasoningEffort}
+            />
             {preview && (
               <p
                 data-testid="subagent-main-preview"
@@ -462,6 +467,37 @@ function MainRow({ rootSessionId, isActive }: { rootSessionId: string; isActive:
         </div>
       </Link>
     </li>
+  );
+}
+
+function ExecutionChips({
+  account,
+  model,
+  effort,
+}: {
+  account?: string | null;
+  model?: string | null;
+  effort?: string | null;
+}) {
+  if (!account && !model && !effort) return null;
+  return (
+    <div className="mt-0.5 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+      {account && (
+        <span title="Account" className="rounded border px-1">
+          {account}
+        </span>
+      )}
+      {model && (
+        <span title={`Model: ${model}`} className="rounded border px-1 font-mono">
+          {shortModelName(model)}
+        </span>
+      )}
+      {effort && (
+        <span title="Reasoning effort" className="rounded border px-1">
+          {effort}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -629,6 +665,11 @@ function SubagentRow({
                   </span>
                 ) : null}
               </div>
+              <ExecutionChips
+                account={child.account_id}
+                model={child.model}
+                effort={child.reasoning_effort}
+              />
               {child.last_message_preview && (
                 <p className="mt-0.5 truncate text-sm text-muted-foreground">
                   {child.last_message_preview}
