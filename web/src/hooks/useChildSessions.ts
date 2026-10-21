@@ -61,6 +61,9 @@ export interface ChildSessionInfo {
    * ``"databricks-claude-sonnet-5"``. ``null``/absent when the child was
    * not routed (routing off, or a server that predates the field).
    */
+  account_id?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
   routed_model?: string | null;
 }
 
@@ -81,6 +84,9 @@ interface ChildSessionWire {
   busy: boolean;
   last_message_preview?: string | null;
   pending_elicitations_count?: number;
+  account_id?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
   routed_model?: string | null;
 }
 
@@ -225,6 +231,9 @@ export async function fetchChildSessions(sessionId: string): Promise<ChildSessio
     busy: row.busy,
     last_message_preview: row.last_message_preview ?? null,
     pending_elicitations_count: row.pending_elicitations_count ?? 0,
+    account_id: row.account_id ?? null,
+    model: row.model ?? null,
+    reasoning_effort: row.reasoning_effort ?? null,
     routed_model: row.routed_model ?? null,
   }));
 }
