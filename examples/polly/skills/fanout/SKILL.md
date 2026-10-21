@@ -14,7 +14,7 @@ dependency).
    Record the worktree path + branch in the registry
    (`.polly/registry.json`).
 2. Dispatch one implementation sub-agent per task, scoped to its worktree:
-   `sys_session_send(agent="claude_code"|"codex"|"opencode"|"cursor"|"hermes"|"agy", title="<task_slug>",
+   `sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"|"codex"|"opencode"|"opencode-kimi"|"opencode-glm"|"opencode-qwen"|"agy", title="<task_slug>",
    args={purpose: "implement", input: "<task + acceptance contract +
    worktree path>"})`. Use a short task-based title such as `auth-refactor` or
    `fix-sse-error`, never the raw vendor name. State the scope and that it must
@@ -22,7 +22,7 @@ dependency).
    and opens its OWN PR for the branch. Every commit the worker authors must
    end with a blank line followed by the exact co-sign trailer as its final
    line — `Co-authored-by: omnigent <noreply@omnigent.ai>`.
-   For a long-running `claude_code` or `codex` implementation with an explicit
+   For a long-running `claude_code`, `claude_sonnet`, `claude_haiku`, or `codex` implementation with an explicit
    completion condition, the `input` may instead be one standalone
    `/goal <condition>` command containing that same task, worktree, acceptance
    contract, green gates, and PR requirement.
@@ -52,8 +52,9 @@ dependency).
   conversation while it runs.
 - If a running worker is wrong, runaway, superseded, or no longer useful, call
   `sys_cancel_task` with `task_id` set to the recorded `conversation_id` before
-  dispatching a replacement. `claude_code` is hard-stopped; `codex` cancellation
-  is best-effort until its runner-side hard-stop exists.
+   dispatching a replacement. The `claude-native` workers (`claude_code`,
+   `claude_sonnet`, `claude_haiku`) are hard-stopped; `codex` cancellation
+   is best-effort until its runner-side hard-stop exists.
 - A sub-agent that returns a dark or failing result: don't re-prompt it in a
   loop — re-dispatch a fresh implementation sub-agent in a clean worktree, or
   escalate to the user.

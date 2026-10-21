@@ -153,7 +153,7 @@ def test_cursor_native_defaults_to_yolo_flag() -> None:
     """
     A headless cursor-native sub-agent defaults to ``--yolo``.
 
-    Polly's cursor worker launches in a pane where no human answers
+    A cursor worker launched in a pane where no human answers
     cursor-agent's in-terminal approval prompts (also mirrored as web
     elicitation cards). Without ``--yolo`` the worker stalls on the first
     gated tool call — the same headless seam that forced codex's default

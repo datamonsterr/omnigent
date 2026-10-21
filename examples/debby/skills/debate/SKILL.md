@@ -3,12 +3,19 @@ name: debate
 description: Have the Claude and GPT partners critique each other's answers across a configurable number of rounds (default 1) before converging on a synthesis. Use when the user wants the two perspectives stress-tested against each other, not just shown side by side.
 ---
 
-# debate — make the two partners argue it out
+# debate — make two partners argue it out
 
-Normally Debby fans a question out to both partners and shows the two
-answers side by side. **debate** goes further: it relays each partner's
-answer to the *other* partner for criticism, loops that for a configurable
-number of rounds, and then converges on a synthesis.
+Normally Debby fans a question out to both flagship partners (`claude` and
+`gpt`) and shows the two answers side by side. **debate** goes further: it
+relays each partner's answer to the *other* partner for criticism, loops
+that for a configurable number of rounds, and then converges on a synthesis.
+Without an explicit user request, use only `claude` + `gpt`.
+Cost, speed, task difficulty, and debate mode do not opt in the bench.
+Only when the user explicitly requests extra perspectives, the full panel, or
+named bench heads may you select two AVAILABLE requested heads to debate
+(e.g. `opencode-kimi` vs `claude_sonnet`), keeping one stable `title` per debater.
+In the procedure below, substitute the selected debaters consistently for
+`claude` and `gpt`; never silently substitute an unsolicited bench head.
 
 ## Rounds
 

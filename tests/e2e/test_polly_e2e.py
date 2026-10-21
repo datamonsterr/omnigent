@@ -187,7 +187,8 @@ def _mock_polly_spec_dir(
         shipped ``examples/polly``.
     :param rewrite_sub_agent_harnesses: When ``True``, rewrite each
         sub-agent's ``config.yaml`` to replace native CLI harnesses
-        (``pi``, ``pi-native``, ``claude-native``, ``codex-native``, etc.)
+        (``claude-native``, ``codex-native``, ``opencode-native``,
+        ``antigravity-native``, etc.)
         with ``openai-agents``.  Use this when a test only needs the child
         *session row* to be created (e.g. to verify ``model_override``) and
         doesn't need the native binary to actually run — avoids failures on
@@ -203,11 +204,10 @@ def _mock_polly_spec_dir(
             "native-claude",
             "codex-native",
             "native-codex",
-            "pi",
-            "pi-native",
-            "native-pi",
-            "cursor-native",
-            "native-cursor",
+            "opencode-native",
+            "native-opencode",
+            "antigravity-native",
+            "native-antigravity",
         }
     )
 

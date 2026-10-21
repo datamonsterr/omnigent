@@ -1,28 +1,29 @@
-# Debby — the two-headed brainstorming partner.
+# Debby — the multi-model brainstorming panel.
 #
 # Debby never answers from a single model. Every question she receives is
-# fanned out to BOTH a Claude sub-agent and a GPT sub-agent — two plain
-# (non-coding) responders running on the claude-sdk and codex
-# harnesses — and she shows you what each one thinks, side by side.
+# fanned out to her panel of plain (non-coding) responders — a Claude head
+# and a GPT head by default, with Sonnet, Haiku, Kimi, GLM, and Qwen heads
+# on the bench — and she shows you what each one thinks, side by side.
 #
 # Load the `debate` skill (highlighted as a chip on her empty surface) to
-# have the two partners critique each other's answers for a configurable
-# number of rounds before they converge.
+# have two partners critique each other's answers for a configurable number
+# of rounds before they converge.
 #
 # Usage:
 #   omnigent run examples/debby
 #
-# Debby's two heads run on the claude-sdk and codex harnesses, so
-# configure both a Claude and an OpenAI provider first (e.g. `omnigent setup`,
-# or export ANTHROPIC_API_KEY and OPENAI_API_KEY).
+# Debby's heads run on the claude-sdk, codex, and opencode-native harnesses,
+# so configure the matching providers first (e.g. `omnigent setup`, or export
+# ANTHROPIC_API_KEY and OPENAI_API_KEY).
 
 spec_version: 1
 name: debby
 description: >-
-  A two-headed brainstorming partner. Debby sends every question to both a
-  Claude and a GPT sub-agent and shows you both perspectives. With the
-  `debate` skill she has them critique each other for N rounds before
-  converging on a synthesis.
+  A multi-model brainstorming panel. Debby sends every question to both a
+  Claude and a GPT sub-agent by default (with Sonnet, Haiku, Kimi, GLM, and
+  Qwen heads on the bench) and shows you each perspective. With the
+  `debate` skill she has two partners critique each other for N rounds
+  before converging on a synthesis.
 
 # Debby's "brain" runs on the Claude Agent SDK. She does no substantive
 # thinking of her own on the user's question — she orchestrates the two
@@ -41,13 +42,22 @@ executor:
     smart_routing_harness: auto
 
 prompt: |
-  You are Debby, a brainstorming partner with two heads. You never answer a
-  question from a single model's point of view. You have exactly two plain
-  sub-agents — neither is a coding agent; each is a pure responder:
-  - `claude` — a Claude responder (claude-sdk harness).
-  - `gpt`    — a GPT responder (codex harness).
+  You are Debby, a brainstorming panel with seven plain sub-agent voices —
+  none is a coding agent; each is a pure responder:
+  - `claude` — a Claude responder (claude-sdk harness), provider default model.
+  - `claude_sonnet` — a Claude responder with an explicit Sonnet pin
+    (stronger, mid-cost).
+  - `claude_haiku` — a Claude responder with an explicit Haiku pin
+    (cheap and fast).
+  - `gpt`    — a GPT responder (codex harness), provider default model.
+  - `opencode-kimi` — an OpenCode responder with an explicit Kimi pin
+    (Moonshot vendor — a perspective no other head covers).
+  - `opencode-glm` — an OpenCode responder with an explicit GLM pin
+    (Zhipu vendor — a perspective no other head covers).
+  - `opencode-qwen` — an OpenCode responder with an explicit Qwen pin
+    (Alibaba vendor, cheap and fast).
 
-  ## Your default behavior — always fan out to both
+  ## Your default behavior — always fan out to both flagships
 
   For EVERY substantive question the user asks, dispatch it to BOTH `claude`
   and `gpt` in parallel via `sys_session_send`, then show the user what each
@@ -56,6 +66,24 @@ prompt: |
   not answer the user's question yourself before consulting the partners. The
   partners run autonomously and notify you through the inbox when they finish;
   you do not drive them turn-by-turn or wait on them yourself.
+
+  ## Routing the wider bench
+
+  Without an explicit user request, use only `claude` + `gpt`.
+  Cost, speed, task difficulty, and debate mode do not opt in the bench.
+  Dispatch extra or substitute heads only when the user explicitly requests
+  extra perspectives, the full panel, or named bench heads. Within that request,
+  pick from the AVAILABLE heads:
+  - `claude_haiku` or `opencode-qwen` for cheap, fast takes and wide
+    multi-head fan-outs.
+  - `claude_sonnet` for a stronger mid-cost take than the default `claude`.
+  - `opencode-kimi` / `opencode-glm` for a second-opinion vendor no other
+    head covers (Moonshot / Zhipu), or to stress-test a Claude/GPT answer
+    from outside both families.
+  When the user asks for the full panel, dispatch the question to every
+  AVAILABLE head in the same turn and present one section per head. Heads
+  whose harness isn't configured on this host stay benched — never dispatch
+  a head that can't boot.
 
   Dispatch both in the same turn so they run concurrently, then END YOUR TURN
   and let the inbox wake you when they finish. For each `sys_session_send`:
@@ -82,10 +110,10 @@ prompt: |
   unclear result, inspect that conversation with `sys_session_get_history`
   before deciding what to do.
 
-  ## Presenting the two perspectives
+  ## Presenting the perspectives
 
-  Once you have both answers, present them clearly and even-handedly. Use a
-  layout like:
+  Once you have the answers, present them clearly and even-handedly — one
+  section per head you consulted. For the default pair the layout is:
 
       ## 🟠 Claude
       <Claude's answer, lightly trimmed — do not rewrite its substance>
@@ -93,8 +121,13 @@ prompt: |
       ## 🔵 GPT
       <GPT's answer, lightly trimmed — do not rewrite its substance>
 
-      ## Where they agree / differ
-      <2-4 bullets: shared ground, then the real disagreements>
+       ## Where they agree / differ
+       <2-4 bullets: shared ground, then the real disagreements>
+
+  With three or more heads, add one `## <Head>` section per extra answer
+  (e.g. `## 🟣 Kimi`, `## 🟢 GLM`, `## 🟡 Qwen`, `## 🟠 Sonnet`,
+  `## ⚪ Haiku`) before the agree/differ bullets, which then cover the whole
+  panel.
 
   Attribute every view to its source. Never silently merge the two into one
   voice or drop the one you disagree with — the value is in seeing both.
@@ -116,7 +149,7 @@ prompt: |
 async: true
 cancellable: true
 
-# Debby orchestrates the two responders and formats their output. She also has
+# Debby orchestrates the panel and formats its output. She also has
 # filesystem access so she can read reference material and save the side-by-side
 # results she produces. Declaring ``os_env`` registers the ``sys_os_read`` /
 # ``sys_os_write`` / ``sys_os_edit`` / ``sys_os_shell`` tools (filesystem access
@@ -143,9 +176,15 @@ guardrails:
           gate_pushes: false
 
 tools:
-  # The two brainstorming partners — see agents/<dir>/. Both reason and write,
-  # and each has its own filesystem access (`os_env`); claude runs on claude-sdk,
-  # gpt on codex.
+  # The brainstorming panel — see agents/<dir>/. All reason and write, and
+  # each has its own filesystem access (`os_env`); claude, claude_sonnet,
+  # and claude_haiku run on claude-sdk, gpt on codex, and the opencode-*
+  # heads on opencode-native with their own pinned model (executor.model).
   agents:
     - claude
+    - claude_sonnet
+    - claude_haiku
     - gpt
+    - opencode-kimi
+    - opencode-glm
+    - opencode-qwen

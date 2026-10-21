@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from dev.lint.lint_no_hardcoded_models import (
+    EXAMPLE_PIN_PATHS,
     OWNED_FALLBACK_PATH,
     SOURCE_EXTENSIONS,
     _iter_scannable_paths,
@@ -160,6 +161,60 @@ def test_scan_flags_yaml_model_key(tmp_path: Path) -> None:
         (2, "databricks-gpt-5-5"),
         (3, "databricks-gpt-5-5"),
     ]
+
+
+@pytest.mark.parametrize("bundle", ["polly", "debby"])
+def test_scan_allows_only_declared_example_executor_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bundle: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = Path(f"examples/{bundle}/agents/claude_sonnet/config.yaml")
+    config.parent.mkdir(parents=True)
+    config.write_text("executor:\n  model: claude-sonnet-5-5\nnotes: claude-sonnet-5-5\n")
+    assert [(hit.line, hit.model) for hit in scan(config)] == [(3, "claude-sonnet-5-5")]
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "content"),
+    [
+        ("examples/polly/agents/other/config.yaml", "executor:\n  model: claude-sonnet-5-5\n"),
+        ("examples/other/config.yaml", "executor:\n  model: claude-sonnet-5-5\n"),
+        ("examples/polly/agents/claude_sonnet/config.yaml", "model: claude-sonnet-5-5\n"),
+        (
+            "examples/polly/agents/claude_sonnet/config.yaml",
+            "executor:\n  model: claude-sonnet-5-5\n  model: claude-sonnet-5-5\n",
+        ),
+        (
+            "examples/polly/agents/claude_sonnet/config.yaml",
+            "shared: &pin claude-sonnet-5-5\nexecutor:\n  model: *pin\n",
+        ),
+    ],
+)
+def test_scan_rejects_undeclared_example_pins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative_path: str, content: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = Path(relative_path)
+    config.parent.mkdir(parents=True)
+    config.write_text(content)
+    assert scan(config)
+
+
+def test_declared_example_pins_have_no_other_model_hardcodes() -> None:
+    assert len(EXAMPLE_PIN_PATHS) == 10
+    for path in EXAMPLE_PIN_PATHS:
+        assert path.is_file()
+        assert scan(path) == []
+
+
+def test_scan_checks_other_fields_on_example_pin_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = Path("examples/polly/agents/claude_sonnet/config.yaml")
+    config.parent.mkdir(parents=True)
+    config.write_text("executor: {model: claude-sonnet-5-5, notes: gpt-5.5}\n")
+    assert [(hit.line, hit.model) for hit in scan(config)] == [(1, "gpt-5.5")]
 
 
 def test_scan_ignores_tests(tmp_path: Path) -> None:

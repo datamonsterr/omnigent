@@ -1,18 +1,28 @@
 ---
 name: polly-e2e-dev
-description: End-to-end test the polly multi-agent coding orchestrator's critical user journeys (CUJs). Two halves — a deterministic mock-LLM driver (polly_cuj.py) that boots a throwaway local server + mock LLM and asserts the substrate (boot, bridged sys_* tool dispatch, the blast_radius / spawn_bounds / headless_subagent_purpose_guard guardrails, fan-out delegation), and a live real-CLI recipe (real claude/codex/pi, real worktrees/PRs) for polly's actual judgment. Load when developing, testing, or debugging examples/polly — its config.yaml, the claude_code/codex/pi sub-agents, the investigate/fanout/cross-review skills, or the omnigent.inner.nessie.policies guardrails — or reproducing a polly orchestration bug.
+description: End-to-end test the polly multi-agent coding orchestrator's critical user journeys (CUJs). Two halves — a deterministic mock-LLM driver (polly_cuj.py) that boots a throwaway local server + mock LLM and asserts the substrate (boot, bridged sys_* tool dispatch, the blast_radius / spawn_bounds / headless_subagent_purpose_guard guardrails, fan-out delegation), and a live real-CLI recipe (real claude/codex/opencode/agy, real worktrees/PRs) for polly's actual judgment. Load when developing, testing, or debugging examples/polly — its config.yaml, the claude_code/codex/opencode/agy sub-agents, the investigate/fanout/cross-review skills, or the omnigent.inner.nessie.policies guardrails — or reproducing a polly orchestration bug.
 ---
 
 # polly orchestrator: end-to-end CUJ dev & testing
 
 `polly` (`examples/polly/`) is a multi-agent **coding orchestrator**: a
-`claude-sdk` "brain" that writes no code itself and delegates everything to three
-coding sub-agents — `claude_code` (claude-native), `codex` (codex-native), and
-`pi` (headless, multi-model). Its critical user journeys are orchestration
-behaviors, not single-turn answers:
+`claude-sdk` "brain" that writes no code itself and delegates everything to
+nine coding sub-agents. Workers share four host readiness keys:
 
-- **roster preflight** — first turn runs `command -v claude codex pi`, routes
-  only to workers whose CLI resolved.
+| Workers | `configured_harnesses` key |
+|---|---|
+| `claude_code`, `claude_sonnet`, `claude_haiku` | `claude-native` |
+| `codex` | `codex-native` |
+| `opencode`, `opencode-kimi`, `opencode-glm`, `opencode-qwen` | `opencode-native` |
+| `agy` | `antigravity-native` |
+
+Its critical user journeys are orchestration behaviors, not single-turn answers:
+
+- **roster preflight** — first turn calls `sys_session_get_info({})`, reads
+  `configured_harnesses`, and routes only to workers whose shared key is exactly
+  `true`. Any other value benches all workers on that key. Only when the map is
+  absent or `null`, run one `command -v claude codex opencode agy || true` fallback.
+  The fallback proves PATH presence only; dispatch can still fail on auth/version.
 - **investigate** — read-only work fanned to `explore`/`search` sub-agents;
   synthesize from their reports.
 - **fanout** — independent tasks, each in its own git worktree + sub-agent, each
@@ -25,12 +35,20 @@ behaviors, not single-turn answers:
   force-push / `rm -rf /`), `spawn_bounds` (cap dispatches per turn),
   `headless_subagent_purpose_guard` (every dispatch needs `args.purpose`).
 
+Review independence compares BOTH workers' actual resolved model vendor
+families after routing, provider defaults, executor pins, and `args.model`
+overrides. Worker names and different harnesses do not prove different vendors.
+Check the exact resolved ids and verified families against `sys_list_models`;
+a static fallback, unverified entry, or unknown family cannot establish independence.
+For example, overriding `opencode-kimi` to Claude makes it ineligible to review
+a Claude-built diff. Confirm the reviewer after launch before accepting review.
+
 This skill tests those CUJs two ways. Use **both** — they cover different things:
 
 | Half | What it proves | Needs |
 |------|----------------|-------|
 | **Mock loop** (`polly_cuj.py`) | The **substrate/mechanics** — the brain is *scripted*, so this proves bundle load, server-side policy resolution, bridged `sys_*` tool dispatch, the guardrail DENYs, and fan-out — deterministically, with no creds | nothing (mock LLM) |
-| **Live recipe** | polly's **judgment** — does the real brain preflight, decompose, delegate, cross-review, and pull in the human correctly | real `claude`/`codex`/`pi` + model creds + network |
+| **Live recipe** | polly's **judgment** — does the real brain preflight, decompose, delegate, cross-review, and pull in the human correctly | real `claude`/`codex`/`opencode`/`agy` + model creds + network |
 
 > Like the sibling harness skills, turns run from your **current checkout**
 > (`omni run <bundle> --server <url>` = local runner + remote server), so testing
@@ -75,7 +93,7 @@ Read the result with `… | grep '^SUMMARY' | python -m json.tool`. Each run tak
 | `tool_dispatch` | call `sys_os_shell` to write a sentinel | the file appears on disk (bridged `sys_*` dispatch works; `blast_radius` ALLOWs benign shell) |
 | `guardrail_purpose` | `sys_session_send` with **no** `args.purpose` | tool output carries `Denied by policy: … must declare what kind of work it is` (`headless_subagent_purpose_guard`) |
 | `guardrail_blast_radius` | `sys_os_shell("git push --force …")` | tool output carries `Denied by policy: … blast-radius policy` |
-| `fanout_dispatch` | emit 7 `sys_session_send` in one turn | 6 dispatch handles created and the seventh is denied by `spawn_bounds` |
+| `fanout_dispatch` | emit 11 `sys_session_send` in one turn | 10 dispatch handles created and the eleventh is denied by `spawn_bounds` |
 
 ### The verifiable before→after loop
 
@@ -100,19 +118,24 @@ right vendor, cross-reviews). That is the live recipe.
 
 ---
 
-## Part B — the live recipe (real claude/codex/pi)
+## Part B — the live recipe (real claude/codex/opencode/agy)
 
 ### Prereqs (check first)
 
 1. **You're on the branch you want to test.**
 2. **A Claude provider for the brain** (`omni setup`, or `ANTHROPIC_API_KEY`, or
    a Databricks default). Verify booleans only — never print keys.
-3. **Worker CLIs on PATH** — this *is* the roster preflight:
+3. **Host readiness** — run `sys_session_get_info({})` in the bound session and
+   read `configured_harnesses` using the nine-worker mapping above. Require
+   exactly `true`; false/status strings bench every worker sharing that key.
+   Only if the map is absent or `null`, fall back to this PATH probe:
    ```bash
-   command -v claude codex pi || true
+   command -v claude codex opencode agy || true
    ```
-   A worker is launchable only if its binary resolved. Cross-review needs **two
-   different vendors** available.
+   All Claude workers share `claude`; all OpenCode workers share `opencode`.
+   A resolved binary is weaker evidence than host readiness: drop any worker
+   that fails at dispatch, without retrying it. Cross-review needs **two verified
+   different model vendor families**, not merely two binaries or worker names.
 4. **Network egress** to the model backends; **`gh`** authed if you want real PRs.
 
 ### Run a live turn
@@ -145,10 +168,10 @@ gh pr list --author "@me"                          # each implementer opens its 
 
 | CUJ | Drive it | Look for |
 |---|---|---|
-| roster preflight | first live turn on a box missing a CLI | polly tells you which worker is unavailable; routes around it |
+| roster preflight | first live turn with a missing/unauthenticated harness | one readiness lookup; non-true keys bench every mapped worker; PATH fallback only for absent/null map |
 | investigate | prompt a read-only question ("explain/audit/why does X…") | `child_sessions` with `purpose: explore/search`; answer cites their reports, not polly's own deep reads |
 | fanout | prompt 2–3 independent changes | one worktree + one sub-agent + one PR per task |
-| cross-review | let an implementer finish | a **different-vendor** reviewer child with `purpose: review`; blocking issues sent back to the **same** implementer session |
+| cross-review | let an implementer finish, including an `args.model` override | actual resolved implementer/reviewer ids have verified different families after routing; same-family overrides and unknown/fallback entries cannot pass; blockers return to the **same** implementer session |
 | plan gate / inbox | a multi-step task | polly pauses for human approval at the plan gate; ends its turn after dispatch and is autowoken by the inbox (no busy-poll) |
 | guardrails (ASK) | a task that pushes/merges | the runner surfaces an approval card; `ask_timeout: 86400` keeps it open |
 
@@ -179,14 +202,14 @@ side effects.
   marker — match on that plus a policy-specific reason fragment (the driver does).
 - **Live fan-out needs the worker CLIs.** In the mock loop, sub-agents are
   rewritten to `openai-agents` so a dispatch needs no binary. Live, a missing
-  `claude`/`codex`/`pi` makes that worker fail to boot — treat it as UNAVAILABLE.
+  `claude`/`codex`/`opencode`/`agy` makes that worker fail to boot — treat it as UNAVAILABLE.
 - **Default server gotcha.** `config.yaml`'s `server:` points at a remote deploy;
   always pass `--server "$SERVER"` for local testing.
 
 ## Code & tests
 
 - **Bundle / prompt / guardrails:** `examples/polly/config.yaml`
-- **Sub-agents:** `examples/polly/agents/{claude_code,codex,pi}/config.yaml`
+- **Sub-agents:** `examples/polly/agents/{claude_code,claude_sonnet,claude_haiku,codex,opencode,opencode-kimi,opencode-glm,opencode-qwen,agy}/config.yaml`
 - **Orchestration skills:** `examples/polly/skills/{investigate,fanout,cross-review}/SKILL.md`
 - **Guardrail policies:** `omnigent/inner/nessie/policies.py`
 - **Runner-side gate:** `omnigent/runner/policy.py`; server-side tool-call

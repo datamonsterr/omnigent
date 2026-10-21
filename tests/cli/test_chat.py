@@ -2486,15 +2486,28 @@ def test_materialize_directory_bundle_with_override_keeps_nested_harness_unpinne
             "polly",
             {
                 "claude_code": "claude-native",
+                "claude_sonnet": "claude-native",
+                "claude_haiku": "claude-native",
                 "codex": "codex-native",
                 "opencode": "opencode-native",
-                "cursor": "cursor-native",
-                "hermes": "hermes-native",
-                "pi": "pi",
+                "opencode-kimi": "opencode-native",
+                "opencode-glm": "opencode-native",
+                "opencode-qwen": "opencode-native",
                 "agy": "antigravity-native",
             },
         ),
-        ("debby", {"claude": "claude-sdk", "gpt": "codex"}),
+        (
+            "debby",
+            {
+                "claude": "claude-sdk",
+                "claude_sonnet": "claude-sdk",
+                "claude_haiku": "claude-sdk",
+                "gpt": "codex",
+                "opencode-kimi": "opencode-native",
+                "opencode-glm": "opencode-native",
+                "opencode-qwen": "opencode-native",
+            },
+        ),
     ],
 )
 def test_materialize_bundle_overrides_brain_harness(

@@ -26,12 +26,23 @@ anyone needs to read through.
    exact file set/command/commit the implementer reported. Never use
    `grep -c 'def test_'` as a pytest count: it counts functions, not collected
    cases, and misses parametrized case expansion.
-3. Dispatch a DIFFERENT-vendor sub-agent as reviewer: pick any AVAILABLE worker
-   whose vendor differs from the implementer's — `claude_code`, `codex`,
-   `opencode`, `cursor`, `hermes`, `agy`, or `pi` (e.g. Claude built it → any of
-   `codex` / `opencode` / `cursor` / `hermes` / `agy` / `pi`, and so on). Use a
+3. Dispatch a DIFFERENT-vendor sub-agent as reviewer: pick an AVAILABLE worker
+   whose actual resolved model vendor family differs from the implementer's — `claude_code`,
+   `claude_sonnet`, `claude_haiku`, `codex`, `opencode`, `opencode-kimi`,
+   `opencode-glm`, `opencode-qwen`, or `agy`. Compare BOTH dispatches after
+   routing, provider defaults, pinned executor.model, and `args.model` overrides.
+   Never infer independence from worker names or harnesses. For example,
+   `opencode-kimi` overridden to a Claude model cannot review a Claude-built diff;
+   two OpenCode workers resolved to the same family are also ineligible.
+   Record the implementer's resolved id and family with its result. Check
+   `sys_list_models` for that exact id's family and verification metadata, and
+   confirm the reviewer's resolved id and family after launch. A static fallback
+   listing, an unverified model, or an unknown family cannot establish independence.
+   If either family cannot be verified, or routing makes them the same, do not
+   accept the review as independent: choose a verified different family or
+   escalate at the plan gate. Use a
    task-based title such as `review-auth-refactor`, never the raw vendor name:
-   `sys_session_send(agent="claude_code"|"codex"|"opencode"|"cursor"|"hermes"|"agy"|"pi", title="review-<task_slug>",
+   `sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"|"codex"|"opencode"|"opencode-kimi"|"opencode-glm"|"opencode-qwen"|"agy", title="review-<task_slug>",
    args={purpose: "review", input: "Read the diff at <absolute shared diff path>
    (base <base-sha>, head <head-sha>). <The acceptance contract>.
    Review ONLY against the contract. Report blocking / non-blocking /
@@ -69,7 +80,7 @@ anyone needs to read through.
   human at the plan gate.
 - Give the reviewer ONLY the diff snapshot + contract — never the implementer's
   transcript or worktree. The cross-vendor independence is the whole point.
-- Review is a coding sub-agent (`claude_code`/`codex`/`opencode`/`cursor`/`hermes`/`agy`/`pi`) dispatched with
+- Review is a coding sub-agent (`claude_code` / `claude_sonnet` / `claude_haiku` / `codex` / `opencode` / `opencode-kimi` / `opencode-glm` / `opencode-qwen` / `agy`) dispatched with
   `purpose: "review"` — a DIFFERENT vendor from the one that built the diff. It
   reports issues and never edits; only the implementer opens a PR, so a stray
   reviewer edit never reaches the deliverable.

@@ -12,13 +12,20 @@ repository-specific technical question.
 ## Procedure
 1. Decompose the question into one or more bounded investigation tasks. Prefer
    two independent lenses for ambiguous or high-stakes questions.
-2. Dispatch each task to `claude_code`, `codex`, `opencode`, `cursor`, `hermes`, `agy`, or `pi`:
-   `sys_session_send(agent="claude_code"|"codex"|"opencode"|"cursor"|"hermes"|"agy"|"pi",
+2. Dispatch each task to `claude_code`, `claude_sonnet`, `claude_haiku`, `codex`, `opencode`, `opencode-kimi`, `opencode-glm`, `opencode-qwen`, or `agy`:
+   `sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"|"codex"|"opencode"|"opencode-kimi"|"opencode-glm"|"opencode-qwen"|"agy",
    title="explore-<task_slug>", args={purpose: "explore", input: "<question +
    exact scope + evidence requested>"})`. Use a task-based title such as
    `explore-ci-flake`, never the raw vendor name. Use `purpose: "search"` only
-   when the task is primarily external/document search. Prefer `pi` when a
-   third lens or a non-Claude/GPT model is wanted. Any worker takes an optional
+   when the task is primarily external/document search. Prefer a different-vendor
+    implementer when an independent lens is wanted (e.g. `agy` for a Gemini
+    perspective, or `opencode` for a third implementer view). For cheap, fast,
+    wide fan-outs prefer `claude_haiku` or `opencode-qwen`; for a second-opinion
+    review lens consider `opencode-kimi` or `opencode-glm`. Compare the actual
+    resolved model families after routing and overrides before claiming an
+    independent lens; names and harnesses alone do not establish it, and an
+    unknown or unverified fallback family cannot establish independence.
+    Any worker takes an optional
    `args.model` (`sys_list_models` shows what each worker can run; an invalid
    model/worker combination fails loud at dispatch, and `model` only applies on
    the dispatch that CREATES the session — a send that continues an existing
