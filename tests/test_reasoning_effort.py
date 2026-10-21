@@ -299,3 +299,19 @@ def test_opencode_tier_falls_back_to_default_without_family() -> None:
         opencode_effort_tier_model("other-provider/some-model", "low")
         == "opencode-go/longcat-2.5-preview-free"
     )
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "opencode/minimax-m3.1-flash-free",
+        "opencode/glm-5.3-flash-free",
+        "opencode/deepseek-v4.1-flash-free",
+    ],
+)
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+def test_opencode_effort_keeps_explicit_free_model_pinned(model_id: str, effort: str) -> None:
+    """Unknown free-model tiers must never promote a pinned model to a paid tier."""
+    from omnigent.util.reasoning_effort import opencode_effort_tier_model
+
+    assert opencode_effort_tier_model(model_id, effort) == model_id

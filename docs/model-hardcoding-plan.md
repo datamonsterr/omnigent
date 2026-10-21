@@ -149,6 +149,14 @@ An explicit Anthropic `[1m]` marker remains self-describing metadata, and an
 uncatalogued/offline model keeps the conservative 128K fallback rather than a
 release-specific guess.
 
+## OpenCode free-model effort
+
+OpenCode has no separate reasoning-effort axis; its effort control normally
+selects a known model tier. If a user pins a free model ending in `-free` with
+no declared tier mapping, Omnigent keeps that exact model at every effort rung.
+The control does not promise to change the model's internal reasoning, and it
+never replaces the free selection with a paid tier.
+
 ## Pi Wire Routing
 
 Pi gateway configuration consumes the same normalized Unity Catalog model

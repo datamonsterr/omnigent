@@ -53,7 +53,9 @@ def opencode_effort_tier_model(model_id: str | None, effort: str) -> str:
     """Resolve an effort rung to a full ``provider/model`` id for OpenCode.
 
     Stays inside the current model's brand family when it has tiers;
-    otherwise (no explicit model, unknown brand) uses the default tier.
+    otherwise (no explicit model, unknown brand) uses the default tier. An
+    explicit free model with no declared tier mapping stays pinned at every
+    rung; the dial does not promise that the model itself supports effort.
 
     :param model_id: Current ``provider/model`` id, or ``None`` for Default.
     :param effort: A validated rung from :data:`OPENCODE_EFFORTS`.
@@ -65,6 +67,8 @@ def opencode_effort_tier_model(model_id: str | None, effort: str) -> str:
 
     if model_id and "/" in model_id:
         bare = model_id.split("/", 1)[1]
+        if bare.endswith("-free"):
+            return model_id
         for brand in sorted(OPENCODE_EFFORT_FAMILY_TIERS, key=len, reverse=True):
             if bare.startswith(brand):
                 return OPENCODE_EFFORT_FAMILY_TIERS[brand][effort]
