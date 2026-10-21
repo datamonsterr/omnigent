@@ -78,6 +78,8 @@ vi.mock("@/store/chatStore", () => ({
   setPendingInitialPrompt: vi.fn(),
 }));
 
+// No account pools: the pool read would otherwise consume the create-request mocks.
+vi.mock("@/hooks/useAccountPools", () => ({ useAccountPools: () => ({ data: [] }) }));
 vi.mock("@/lib/identity", () => ({
   authenticatedFetch: vi.fn(),
   getCurrentUserId: vi.fn(() => null),
