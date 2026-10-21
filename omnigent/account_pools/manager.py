@@ -456,7 +456,11 @@ def prepare_session_account(
         )
 
     pin_key = next(
-        (key for key in (ACCOUNT_ID_LABEL_KEY, LEGACY_ACCOUNT_ID_LABEL_KEY) if key in initial_labels),
+        (
+            key
+            for key in (ACCOUNT_ID_LABEL_KEY, LEGACY_ACCOUNT_ID_LABEL_KEY)
+            if key in initial_labels
+        ),
         None,
     )
     pinned_id = initial_labels.get(pin_key) if pin_key is not None else None

@@ -482,6 +482,18 @@ def test_explicit_invalid_account_rejects(pin: str) -> None:
         prepare_session_account(labels, "codex-native", None, _manager(store))
 
 
+@pytest.mark.parametrize("pin", ["", "   "])
+def test_malformed_explicit_account_rejects_without_pool_fallback(pin: str) -> None:
+    """An empty explicit pin cannot silently select another pool account."""
+    store = FakeStore([_pool("codex", [_account("codex-live", "/data/codex-live")])])
+    labels = {ACCOUNT_ID_LABEL_KEY: pin}
+
+    with pytest.raises(ValueError, match="non-empty"):
+        prepare_session_account(labels, "codex-native", None, _manager(store))
+
+    assert labels == {ACCOUNT_ID_LABEL_KEY: pin}
+
+
 @pytest.mark.parametrize(
     ("session_labels", "expected"),
     [
