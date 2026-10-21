@@ -7,8 +7,8 @@ skip a worker that would run fine.
 
 The user journey (from the report):
 
-1. Configure an orchestrator with a ``cursor-native`` sub-agent (the shipped
-   ``examples/polly`` bundle's ``cursor`` worker).
+1. Configure an orchestrator with a ``cursor-native`` sub-agent (a minimal
+   bundle with a single ``cursor`` worker).
 2. Ask the orchestrator to call ``sys_list_models``.
 3. The catalog row for the cursor worker comes back ``source: "none"`` with
    an empty model list, even though the worker is dispatchable.
@@ -23,8 +23,9 @@ collapses to ``source: "none"``.
 
 This test drives the REAL chain — mock brain tool-call -> runner dispatch ->
 ``catalog_for_spec`` -> persisted transcript row — by booting a throwaway
-local server from this working tree and running the polly orchestrator
-headless with a mock LLM brain, exactly like its siblings in
+local server from this working tree and running a minimal orchestrator
+(a ``cursor_probe`` parent with one ``cursor-native`` child) headless with
+a mock LLM brain, exactly like its siblings in
 ``test_polly_subagent_model_e2e.py``. A stub ``cursor-agent`` (prepended to
 the runner's ``PATH``) is launchable but fails its ``models`` subcommand,
 pinning the dispatchable-worker / failing-probe state deterministically.
@@ -57,7 +58,6 @@ from tests.e2e.test_polly_e2e import (
     _SERVER_BOOT_TIMEOUT_SEC,
     _free_port,
     _mock_env,
-    _mock_polly_spec_dir,
     _wait_for_health,
 )
 
@@ -103,7 +103,7 @@ def _write_cursor_agent_stub(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def local_polly_server(tmp_path: Path) -> Iterator[str]:
+def local_probe_server(tmp_path: Path) -> Iterator[str]:
     """Start a throwaway local ``omnigent server`` from this working tree.
 
     Mirrors ``test_polly_subagent_model_e2e.local_polly_server`` (own sqlite
@@ -155,30 +155,82 @@ def local_polly_server(tmp_path: Path) -> Iterator[str]:
             proc.kill()
 
 
-def _polly_parent_id(base_url: str) -> str:
-    """Find the polly parent session on the throwaway server.
+def _mock_cursor_spec_dir(tmp_path: Path, mock_llm_server_url: str) -> Path:
+    """Write a minimal orchestrator bundle with one ``cursor-native`` worker.
 
-    The server DB is per-test, so the only polly session is ours.
+    The parent (``cursor_probe``) runs on the ``openai-agents`` harness wired
+    to the mock LLM server, mirroring ``_mock_polly_spec_dir``; the single
+    ``cursor`` child keeps the real ``cursor-native`` harness so
+    ``sys_list_models`` exercises the cursor listing-probe path. The child
+    is never dispatched, so no ``cursor-agent`` binary is needed for it —
+    only for the server-side listing probe the catalog performs.
+
+    :param tmp_path: Per-test temp dir to write the bundle into.
+    :param mock_llm_server_url: Mock LLM server base URL for brain auth.
+    :returns: Path to the bundle directory.
+    """
+    dst = tmp_path / "cursor_probe"
+    child_dir = dst / "agents" / "cursor"
+    child_dir.mkdir(parents=True)
+    (dst / "config.yaml").write_text(
+        "spec_version: 1\n"
+        "name: cursor_probe\n"
+        "prompt: Call sys_list_models and report the catalog.\n"
+        "executor:\n"
+        "  type: omnigent\n"
+        f"  model: {_MOCK_BRAIN_MODEL}\n"
+        "  config:\n"
+        "    harness: openai-agents\n"
+        "  auth:\n"
+        "    type: api_key\n"
+        "    api_key: mock-key\n"
+        f"    base_url: {mock_llm_server_url}/v1\n"
+        "  connection:\n"
+        f"    base_url: {mock_llm_server_url}/v1\n"
+        "    api_key: mock-key\n"
+        "tools:\n"
+        "  agents:\n"
+        "    - cursor\n",
+        encoding="utf-8",
+    )
+    (child_dir / "config.yaml").write_text(
+        "spec_version: 1\n"
+        "name: cursor\n"
+        "prompt: probe worker (never dispatched; only listed).\n"
+        "executor:\n"
+        "  type: omnigent\n"
+        "  config:\n"
+        "    harness: cursor-native\n",
+        encoding="utf-8",
+    )
+    return dst
+
+
+def _probe_parent_id(base_url: str) -> str:
+    """Find the cursor_probe parent session on the throwaway server.
+
+    The server DB is per-test, so the only parent session is ours.
 
     :param base_url: Local server base URL.
     :returns: The parent conversation id.
     """
     sessions = _api(base_url, "/v1/sessions?visibility=all").get("data", [])
-    parents = [s["id"] for s in sessions if s.get("agent_name") == "polly"]
-    assert parents, f"no polly session found among {len(sessions)} sessions"
+    parents = [s["id"] for s in sessions if s.get("agent_name") == "cursor_probe"]
+    assert parents, f"no cursor_probe session found among {len(sessions)} sessions"
     return parents[0]
 
 
 @pytest.mark.timeout(600)
 def test_cursor_native_worker_not_reported_source_none(
-    local_polly_server: str,
+    local_probe_server: str,
     mock_llm_server_url: str,
     tmp_path: Path,
 ) -> None:
     """A dispatchable cursor-native worker must not list as ``source: "none"``.
 
     The mock brain calls ``sys_list_models``; the runner-dispatched tool
-    enumerates every polly worker. The ``cursor`` worker's ``cursor-agent``
+    enumerates the orchestrator's workers. The ``cursor`` worker's
+    ``cursor-agent``
     (a stub) is launchable — the worker can run — but its ``models`` listing
     probe fails. Sibling subscription-CLI workers degrade to a usable
     ``source: "static"`` row in this state; the bug is that the cursor row
@@ -188,7 +240,7 @@ def test_cursor_native_worker_not_reported_source_none(
     Fails on un-fixed code with the cursor row at ``source: "none"``; must
     pass once the cursor listing failure degrades to a usable row.
 
-    :param local_polly_server: Base URL of the in-tree local server fixture.
+    :param local_probe_server: Base URL of the in-tree local server fixture.
     :param mock_llm_server_url: Mock LLM server base URL.
     :param tmp_path: Per-test temp dir for the spec copy and the CLI stub.
     """
@@ -197,7 +249,7 @@ def test_cursor_native_worker_not_reported_source_none(
     from tests.e2e.conftest import configure_mock_llm, reset_mock_llm
 
     reset_mock_llm(mock_llm_server_url)
-    polly_dir = _mock_polly_spec_dir(tmp_path, mock_llm_server_url)
+    spec_dir = _mock_cursor_spec_dir(tmp_path, mock_llm_server_url)
     stub = _write_cursor_agent_stub(tmp_path)
     tag = uuid.uuid4().hex[:8]
 
@@ -240,9 +292,9 @@ def test_cursor_native_worker_not_reported_source_none(
             "-m",
             "omnigent",
             "run",
-            str(polly_dir),
+            str(spec_dir),
             "--server",
-            local_polly_server,
+            local_probe_server,
             "-p",
             "Call sys_list_models and report the catalog.",
         ],
@@ -253,12 +305,12 @@ def test_cursor_native_worker_not_reported_source_none(
         timeout=_RUN_TIMEOUT_SEC,
     )
     assert result.returncode == 0, (
-        f"polly run exited {result.returncode}\n--- stdout ---\n{result.stdout}\n"
+        f"probe run exited {result.returncode}\n--- stdout ---\n{result.stdout}\n"
         f"--- stderr ---\n{result.stderr}"
     )
 
-    parent = _polly_parent_id(local_polly_server)
-    items = _api(local_polly_server, f"/v1/sessions/{parent}/items").get("data", [])
+    parent = _probe_parent_id(local_probe_server)
+    items = _api(local_probe_server, f"/v1/sessions/{parent}/items").get("data", [])
 
     # The sys_list_models call ran and its result persisted in the transcript.
     call_ids = {

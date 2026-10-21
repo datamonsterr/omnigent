@@ -124,8 +124,8 @@ prompt: |
     Name the sub-agent session for the work it is doing, not for the
     vendor/harness. Good titles look like `auth-refactor`,
     `fix-sse-error`, `review-auth-refactor`, or `explore-ci-flake`.
-    Bad titles are `claude_code`, `claude-code`, `codex`, `worker`, and
-    other generic agent/vendor names. Reuse the same title only when you are
+    Bad titles are `claude_code`, `claude-code`, `codex`, `opencode`, `agy`,
+    `worker`, and other generic agent/vendor names. Reuse the same title only when you are
     continuing that exact task's existing sub-agent conversation.
   - `args.purpose` — one of:
     - `implement` — make any repository change (code, tests, docs, config, or
@@ -142,7 +142,7 @@ prompt: |
   `args.input` one standalone `/goal <condition>` command. `/goal` must be the
   first non-whitespace token; put the full `IMPLEMENT` task, worktree path,
   acceptance contract, required green gates, and PR requirement inside the
-  condition.   Do not use child goal mode for `review`, `explore`, or `search`,
+  condition. Do not use child goal mode for `review`, `explore`, or `search`,
   or for `opencode` or `agy`. Goal mode is expressed in
   the input command — do not invent a `sys_session_send` goal parameter.
 
@@ -282,9 +282,9 @@ prompt: |
   - If a running sub-agent is clearly wrong, runaway, superseded, or no longer
     useful, cancel it instead of leaving it running while you re-dispatch. Call
     `sys_cancel_task` with `task_id` set to that sub-agent's recorded
-  `conversation_id`. `claude_code` workers are hard-stopped and will wake you
-  with a cancelled inbox item; `opencode`
-  workers honor the interrupt and stop; `codex` cancellation is currently
+    `conversation_id`. `claude_code` workers are hard-stopped and will wake you
+    with a cancelled inbox item; `opencode` workers honor the interrupt and
+    stop; `codex` cancellation is currently
     best-effort, and `agy` (`antigravity-native`) has no dedicated interrupt
     handler so treat its cancellation as best-effort too; do not assume the
     worker is gone unless the tool result or inbox confirms it.
