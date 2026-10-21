@@ -94,7 +94,7 @@ import {
 } from "@/lib/nativeBridge";
 import { writeHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
 import { readHarnessOptions } from "@/lib/modePreferences";
-import { NATIVE_CODING_AGENTS } from "@/lib/nativeCodingAgents";
+import { NATIVE_CODING_AGENTS, nativeAgentHasCapability } from "@/lib/nativeCodingAgents";
 import {
   getNewChatPickerCacheKey,
   readNewChatPermissionCache,
@@ -4639,7 +4639,23 @@ describe("NewChatLandingScreen", () => {
         fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
       }
 
-      if (["claude", "codex", "pi", "devin"].includes(native.key)) {
+      // A harness offers the Edit flyout only when it has real settings to
+      // edit — the model + effort axes. Mode-only harnesses have nothing to
+      // edit, so their row must not offer an EMPTY Edit menu. Read the
+      // capabilities from the harness spec so a harness that gains a model
+      // picker (Antigravity, OpenCode) is covered here without a second
+      // hardcoded list going stale.
+      const hasModelSettings =
+        nativeAgentHasCapability(
+          { name: native.agentName, harness: native.harness },
+          "modelPicker",
+        ) ||
+        nativeAgentHasCapability(
+          { name: native.agentName, harness: native.harness },
+          "devinMode",
+        ) ||
+        native.harness === "codex-native";
+      if (hasModelSettings) {
         fireEvent.click(screen.getByTestId(`new-chat-landing-agent-config-${agentId}`));
         expect(screen.getByTestId("new-chat-landing-agent-models")).toBeVisible();
         expect(screen.getByTestId("new-chat-landing-agent-efforts")).toBeVisible();
