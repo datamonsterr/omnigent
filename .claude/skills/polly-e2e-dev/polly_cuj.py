@@ -21,7 +21,7 @@ Run it (use the repo venv so subprocesses import the checkout, not a stale wheel
     .venv/bin/python .claude/skills/polly-e2e-dev/polly_cuj.py --scenario guardrail_purpose --keep
 
 No credentials or network egress are required — the mock LLM stands in for every
-provider. See ``SKILL.md`` for the live (real claude/codex/pi) recipe.
+provider. See ``SKILL.md`` for the live (real claude/codex/opencode/agy) recipe.
 """
 
 from __future__ import annotations
@@ -68,11 +68,10 @@ _NATIVE_HARNESSES = frozenset(
         "native-claude",
         "codex-native",
         "native-codex",
-        "pi",
-        "pi-native",
-        "native-pi",
-        "cursor-native",
-        "native-cursor",
+        "opencode-native",
+        "native-opencode",
+        "antigravity-native",
+        "native-antigravity",
     }
 )
 
@@ -169,7 +168,7 @@ def _mock_polly_bundle(tmp: Path, mock_url: str, *, rewrite_subagents: bool = Fa
     deterministic model key, and bakes ``auth`` + ``connection`` blocks at the
     mock so neither the brain nor the runner-side cost judge reaches a real
     provider. When *rewrite_subagents* is set, native sub-agent harnesses become
-    ``openai-agents`` too (so a dispatch doesn't need claude/codex/pi on PATH).
+    ``openai-agents`` too (so a dispatch doesn't need claude/codex/opencode/agy on PATH).
     """
     src = (_repo() / "examples" / "polly").resolve()
     dst = tmp / "polly"
@@ -588,7 +587,11 @@ def scenario_guardrail_purpose(ctx: Ctx) -> Result:
         "guardrail_purpose",
         responses=[
             # args is a bare string -> no object purpose -> DENY.
-            {"tool_calls": [_sys_session_send_call("pi", "no-purpose", "investigate the bug")]},
+            {
+                "tool_calls": [
+                    _sys_session_send_call("opencode", "no-purpose", "investigate the bug")
+                ]
+            },
             {"text": "acknowledged the denial"},
         ],
         check_name="headless_subagent_purpose_guard_denied",
@@ -626,7 +629,7 @@ def scenario_fanout_dispatch(ctx: Ctx) -> Result:
     _mock_set_fallback(s.mock_url, "default", "ok")
     calls = [
         _sys_session_send_call(
-            "pi",
+            "opencode",
             f"probe-{i}",
             {"input": "noop", "purpose": "explore"},
             call_id=f"call_{i}",
