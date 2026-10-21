@@ -78,6 +78,10 @@ _FILESYSTEM_RE = re.compile(r"/v1/hosts/[^/]+/filesystem")
 # The worktree-list endpoint the branch combobox queries for the picked repo.
 # Distinct ``/worktrees`` segment, so it never collides with ``/filesystem``.
 _WORKTREES_RE = re.compile(r"/v1/hosts/[^/]+/worktrees")
+# One agy model from the stubbed host catalog, and the label the picker shows
+# for it. agy resolves its model + effort rows from that catalog.
+_AGY_MODEL_ID = "gemini-3-pro"
+_AGY_MODEL_LABEL = "Gemini 3 Pro"
 
 
 def _agents_body() -> str:
@@ -3195,14 +3199,15 @@ async def _drive_fork_of_fork_dedup(base_url: str, session_id: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("native_name", "mode", "mode_label", "launch_args"),
+    ("native_name", "mode", "mode_label", "launch_args", "model_id"),
     [
-        ("cursor", "plan", "Plan", ["--mode", "plan"]),
+        ("cursor", "plan", "Plan", ["--mode", "plan"], None),
         (
             "antigravity",
             "skip",
             "Skip permissions",
             ["--dangerously-skip-permissions"],
+            _AGY_MODEL_ID,
         ),
     ],
 )
@@ -3212,12 +3217,28 @@ def test_start_session_native_permissions_without_empty_edit(
     mode: str,
     mode_label: str,
     launch_args: list[str],
+    model_id: str | None,
 ) -> None:
-    """Mode-only harnesses select directly and configure through the hand menu."""
+    """Harnesses with a mode select directly and pick the mode in the hand menu.
+
+    Two shapes share this contract, because the MODE never lives in the Edit
+    panel: it always comes from the composer's hand menu (the permission chip),
+    so a direct pick applies without an empty Edit panel standing in the way.
+
+    * Mode-only harnesses (Cursor) have no settings at all, so their picker row
+      carries no Edit affordance.
+    * agy carries real model + effort settings, so its row DOES offer the Edit
+      flyout — and the flyout is populated, not empty: the host catalog's
+      models are listed and the pick rides along to the create next to the
+      permission flag.
+
+    Both still select directly: clicking the row picks the harness and closes
+    the picker instead of opening a config panel.
+    """
     base_url, session_id = seeded_session
     _run_in_fresh_loop(
         _drive_native_permissions_without_edit(
-            base_url, session_id, native_name, mode, mode_label, launch_args
+            base_url, session_id, native_name, mode, mode_label, launch_args, model_id
         )
     )
 
@@ -3229,6 +3250,7 @@ async def _drive_native_permissions_without_edit(
     mode: str,
     mode_label: str,
     launch_args: list[str],
+    model_id: str | None,
 ) -> None:
     agent_id = f"ag_{native_name}_e2e"
     async with async_playwright() as pw:
@@ -3258,6 +3280,20 @@ async def _drive_native_permissions_without_edit(
                 re.compile(r"/v1/sessions\?(?!.*pinned=).*visibility=mine"),
                 lambda route: route.fulfill(json={"data": []}),
             )
+            if model_id is not None:
+                # agy resolves its model + effort rows from the host catalog,
+                # so the Edit flyout has real settings to show.
+                await page.route(
+                    f"**/v1/hosts/{_HOST_ID}/harnesses/{native_name}-native/model-options",
+                    lambda route: route.fulfill(
+                        json={
+                            "models": [
+                                {"id": model_id, "displayName": _AGY_MODEL_LABEL},
+                                {"id": "gemini-3-flash", "displayName": "Gemini 3 Flash"},
+                            ]
+                        }
+                    ),
+                )
             await page.add_init_script(
                 f"""window.localStorage.setItem(
                     "omnigent:recent-workspaces",
@@ -3278,9 +3314,15 @@ async def _drive_native_permissions_without_edit(
             if await row.count() == 0:
                 await page.get_by_test_id("new-chat-landing-harness-more").click()
             await expect(row).to_be_visible()
-            await expect(
-                page.get_by_test_id(f"new-chat-landing-agent-config-{agent_id}")
-            ).to_have_count(0)
+            config = page.get_by_test_id(f"new-chat-landing-agent-config-{agent_id}")
+            if model_id is None:
+                # Mode-only harness: nothing to edit, so the row offers no
+                # Edit affordance at all.
+                await expect(config).to_have_count(0)
+            else:
+                # agy has real model + effort settings, so its row offers the
+                # Edit flyout — the mode still comes from the hand menu.
+                await expect(config).to_have_count(1)
             await row.click()
             await expect(picker).to_have_attribute("aria-expanded", "false")
             await expect(page.get_by_role("menu")).to_have_count(0)
@@ -3290,6 +3332,25 @@ async def _drive_native_permissions_without_edit(
             await page.get_by_test_id(f"new-chat-landing-permission-option-{mode}").click()
             await expect(permission).to_contain_text(mode_label)
             await expect(page.get_by_test_id("new-chat-landing-config-modal")).to_have_count(0)
+            if model_id is not None:
+                # agy's settings are populated, not an empty panel: the host
+                # catalog's models are listed, the effort ladder is there, and
+                # the pick rides along to the create next to the permission
+                # flag instead of replacing it.
+                await _open_entry_models(page, agent_id)
+                models = page.get_by_test_id("new-chat-landing-agent-models")
+                await expect(models).to_be_visible()
+                await expect(models).to_contain_text(_AGY_MODEL_LABEL)
+                await expect(page.get_by_test_id("new-chat-landing-agent-efforts")).to_be_visible()
+                await page.get_by_role(
+                    "menuitemcheckbox", name=_AGY_MODEL_LABEL, exact=True
+                ).click()
+                await expect(
+                    page.locator(
+                        '[data-testid^="new-chat-landing-agent-model-"][aria-checked="true"]'
+                    )
+                ).to_contain_text(_AGY_MODEL_LABEL)
+                await _close_entry_models(page)
             await page.get_by_test_id("new-chat-landing-input").fill("inspect this repository")
             await page.get_by_test_id("new-chat-landing-submit").click()
 
@@ -3299,6 +3360,8 @@ async def _drive_native_permissions_without_edit(
             assert body["host_id"] == _HOST_ID, body
             assert body["workspace"] == "/work/repo", body
             assert body.get("terminal_launch_args") == launch_args, body
+            if model_id is not None:
+                assert body.get("model_override") == model_id, body
         finally:
             await browser.close()
 

@@ -94,7 +94,7 @@ import {
 } from "@/lib/nativeBridge";
 import { writeHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
 import { readHarnessOptions } from "@/lib/modePreferences";
-import { NATIVE_CODING_AGENTS } from "@/lib/nativeCodingAgents";
+import { NATIVE_CODING_AGENTS, nativeAgentHasCapability } from "@/lib/nativeCodingAgents";
 import {
   getNewChatPickerCacheKey,
   readNewChatPermissionCache,
@@ -4653,7 +4653,18 @@ describe("NewChatLandingScreen", () => {
         fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
       }
 
-      if (["claude", "codex", "pi", "devin", "opencode", "antigravity"].includes(native.key)) {
+      // Only show Edit when the harness exposes settings the menu can change.
+      const hasEditableSettings =
+        nativeAgentHasCapability(
+          { name: native.agentName, harness: native.harness },
+          "modelPicker",
+        ) ||
+        nativeAgentHasCapability(
+          { name: native.agentName, harness: native.harness },
+          "devinMode",
+        ) ||
+        native.harness === "codex-native";
+      if (hasEditableSettings) {
         fireEvent.click(screen.getByTestId(`new-chat-landing-agent-config-${agentId}`));
         expect(screen.getByTestId("new-chat-landing-agent-models")).toBeVisible();
         expect(screen.getByTestId("new-chat-landing-agent-efforts")).toBeVisible();
