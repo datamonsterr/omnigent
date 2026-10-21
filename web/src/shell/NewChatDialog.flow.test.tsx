@@ -772,6 +772,7 @@ describe("NewChatLandingScreen create flow", () => {
         navigateMock,
         expect.any(Function),
         project,
+        false,
       ),
     );
   });
@@ -879,6 +880,7 @@ describe("NewChatLandingScreen create flow", () => {
         navigateMock,
         expect.any(Function),
         undefined,
+        false,
       ),
     );
     expect(resolveCreate).toBeTypeOf("function");
@@ -925,6 +927,7 @@ describe("NewChatLandingScreen create flow", () => {
         navigateMock,
         expect.any(Function),
         undefined,
+        false,
       ),
     );
   });
@@ -1135,6 +1138,7 @@ describe("NewChatLandingScreen create flow", () => {
         navigateMock,
         expect.any(Function),
         undefined,
+        false,
       ),
     );
 
