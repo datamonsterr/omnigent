@@ -22,8 +22,8 @@ provenance, and the discovery gap that prevents a live listing.
   from configuration/discovery or satisfy the central owned-fallback contract.
 - Model-specific Polly and Debby example workers intentionally demonstrate
   explicit model choices. `EXAMPLE_PIN_PATHS` declares exactly ten agent config
-  files: `claude_sonnet`, `claude_haiku`, `opencode-kimi`, `opencode-glm`, and
-  `opencode-qwen` under each bundle's `agents/` directory. Only their direct
+  files: `claude_sonnet`, `claude_haiku`, `opencode-minimax`, `opencode-glm`,
+  and `opencode-deepseek` under each bundle's `agents/` directory. Only their direct
   `executor.model` YAML scalar is exempt. Provider-default workers, parent
   prompts, other fields, and other example files remain scanned. Duplicate
   executor/model keys, aliases, and malformed YAML do not qualify. Pin updates

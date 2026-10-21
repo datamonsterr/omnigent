@@ -28,11 +28,11 @@ anyone needs to read through.
    cases, and misses parametrized case expansion.
 3. Dispatch a DIFFERENT-vendor sub-agent as reviewer: pick an AVAILABLE worker
    whose actual resolved model vendor family differs from the implementer's — `claude_code`,
-   `claude_sonnet`, `claude_haiku`, `codex`, `opencode`, `opencode-kimi`,
-   `opencode-glm`, `opencode-qwen`, or `agy`. Compare BOTH dispatches after
+   `claude_sonnet`, `claude_haiku`, `codex`, `opencode`, `opencode-minimax`,
+   `opencode-glm`, `opencode-deepseek`, or `agy`. Compare BOTH dispatches after
    routing, provider defaults, pinned executor.model, and `args.model` overrides.
    Never infer independence from worker names or harnesses. For example,
-   `opencode-kimi` overridden to a Claude model cannot review a Claude-built diff;
+   `opencode-minimax` overridden to a Claude model cannot review a Claude-built diff;
    two OpenCode workers resolved to the same family are also ineligible.
    Record the implementer's resolved id and family with its result. Check
    `sys_list_models` for that exact id's family and verification metadata, and
@@ -42,7 +42,7 @@ anyone needs to read through.
    accept the review as independent: choose a verified different family or
    escalate at the plan gate. Use a
    task-based title such as `review-auth-refactor`, never the raw vendor name:
-   `sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"|"codex"|"opencode"|"opencode-kimi"|"opencode-glm"|"opencode-qwen"|"agy", title="review-<task_slug>",
+   `sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"|"codex"|"opencode"|"opencode-minimax"|"opencode-glm"|"opencode-deepseek"|"agy", title="review-<task_slug>",
    args={purpose: "review", input: "Read the diff at <absolute shared diff path>
    (base <base-sha>, head <head-sha>). <The acceptance contract>.
    Review ONLY against the contract. Report blocking / non-blocking /
@@ -80,7 +80,7 @@ anyone needs to read through.
   human at the plan gate.
 - Give the reviewer ONLY the diff snapshot + contract — never the implementer's
   transcript or worktree. The cross-vendor independence is the whole point.
-- Review is a coding sub-agent (`claude_code` / `claude_sonnet` / `claude_haiku` / `codex` / `opencode` / `opencode-kimi` / `opencode-glm` / `opencode-qwen` / `agy`) dispatched with
+- Review is a coding sub-agent (`claude_code` / `claude_sonnet` / `claude_haiku` / `codex` / `opencode` / `opencode-minimax` / `opencode-glm` / `opencode-deepseek` / `agy`) dispatched with
   `purpose: "review"` — a DIFFERENT vendor from the one that built the diff. It
   reports issues and never edits; only the implementer opens a PR, so a stray
   reviewer edit never reaches the deliverable.

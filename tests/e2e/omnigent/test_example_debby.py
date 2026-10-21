@@ -4,8 +4,8 @@ Debby never answers from a single model: every question is fanned out by
 default to BOTH a Claude sub-agent and a GPT sub-agent — two plain
 (non-coding) responders on the claude-sdk and codex harnesses — and the
 ``debate`` skill has two partners critique each other before converging.
-Five bench heads (claude_sonnet / claude_haiku on claude-sdk, opencode-kimi
-/ opencode-glm / opencode-qwen on opencode-native) add vendor diversity on
+Five bench heads (claude_sonnet / claude_haiku on claude-sdk, opencode-minimax
+/ opencode-glm / opencode-deepseek on opencode-native) add vendor diversity on
 request. Pure spec-load — no LLM, no credentials — modeled on
 ``test_example_polly.py``.
 
@@ -41,8 +41,8 @@ def test_debby_flagship_heads_cross_vendor(debby_spec: AgentSpec) -> None:
     """
     Debby's default pair is ``claude`` on claude-sdk and ``gpt`` on codex —
     two distinct vendors — plus five bench heads: ``claude_sonnet`` /
-    ``claude_haiku`` (claude-sdk) and ``opencode-kimi`` / ``opencode-glm`` /
-    ``opencode-qwen`` (opencode-native).
+    ``claude_haiku`` (claude-sdk) and ``opencode-minimax`` / ``opencode-glm`` /
+    ``opencode-deepseek`` (opencode-native).
 
     A missing/renamed head, or both flagships landing on the same harness,
     removes the cross-model contrast that is Debby's entire reason to exist.
@@ -54,17 +54,17 @@ def test_debby_flagship_heads_cross_vendor(debby_spec: AgentSpec) -> None:
         "claude_haiku",
         "claude_sonnet",
         "gpt",
+        "opencode-deepseek",
         "opencode-glm",
-        "opencode-kimi",
-        "opencode-qwen",
+        "opencode-minimax",
     ]
     assert fam["claude"] == "claude-sdk"
     assert fam["claude_sonnet"] == "claude-sdk"
     assert fam["claude_haiku"] == "claude-sdk"
     assert fam["gpt"] == "codex"
-    assert fam["opencode-kimi"] == "opencode-native"
+    assert fam["opencode-minimax"] == "opencode-native"
     assert fam["opencode-glm"] == "opencode-native"
-    assert fam["opencode-qwen"] == "opencode-native"
+    assert fam["opencode-deepseek"] == "opencode-native"
     # The flagships span two distinct vendors → the default answers always
     # contrast across providers.
     assert fam["claude"] != fam["gpt"]
@@ -72,9 +72,9 @@ def test_debby_flagship_heads_cross_vendor(debby_spec: AgentSpec) -> None:
     by_name = {a.name: a for a in debby_spec.sub_agents}
     assert by_name["claude_sonnet"].executor.model == "claude-sonnet-5-5"
     assert by_name["claude_haiku"].executor.model == "claude-haiku-5-5"
-    assert by_name["opencode-kimi"].executor.model == "opencode-go/kimi-k3"
-    assert by_name["opencode-glm"].executor.model == "opencode-go/glm-5.3"
-    assert by_name["opencode-qwen"].executor.model == "opencode-go/qwen3.8-max"
+    assert by_name["opencode-minimax"].executor.model == "opencode/minimax-m3.1-flash-free"
+    assert by_name["opencode-glm"].executor.model == "opencode/glm-5.3-flash-free"
+    assert by_name["opencode-deepseek"].executor.model == "opencode/deepseek-v4.1-flash-free"
 
 
 def test_debby_flagship_heads_are_unpinned(debby_spec: AgentSpec) -> None:

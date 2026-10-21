@@ -13,7 +13,7 @@ nine coding sub-agents. Workers share four host readiness keys:
 |---|---|
 | `claude_code`, `claude_sonnet`, `claude_haiku` | `claude-native` |
 | `codex` | `codex-native` |
-| `opencode`, `opencode-kimi`, `opencode-glm`, `opencode-qwen` | `opencode-native` |
+| `opencode`, `opencode-minimax`, `opencode-glm`, `opencode-deepseek` | `opencode-native` |
 | `agy` | `antigravity-native` |
 
 Its critical user journeys are orchestration behaviors, not single-turn answers:
@@ -40,7 +40,7 @@ families after routing, provider defaults, executor pins, and `args.model`
 overrides. Worker names and different harnesses do not prove different vendors.
 Check the exact resolved ids and verified families against `sys_list_models`;
 a static fallback, unverified entry, or unknown family cannot establish independence.
-For example, overriding `opencode-kimi` to Claude makes it ineligible to review
+For example, overriding `opencode-minimax` to Claude makes it ineligible to review
 a Claude-built diff. Confirm the reviewer after launch before accepting review.
 
 This skill tests those CUJs two ways. Use **both** — they cover different things:
@@ -209,7 +209,7 @@ side effects.
 ## Code & tests
 
 - **Bundle / prompt / guardrails:** `examples/polly/config.yaml`
-- **Sub-agents:** `examples/polly/agents/{claude_code,claude_sonnet,claude_haiku,codex,opencode,opencode-kimi,opencode-glm,opencode-qwen,agy}/config.yaml`
+- **Sub-agents:** `examples/polly/agents/{claude_code,claude_sonnet,claude_haiku,codex,opencode,opencode-minimax,opencode-glm,opencode-deepseek,agy}/config.yaml`
 - **Orchestration skills:** `examples/polly/skills/{investigate,fanout,cross-review}/SKILL.md`
 - **Guardrail policies:** `omnigent/inner/nessie/policies.py`
 - **Runner-side gate:** `omnigent/runner/policy.py`; server-side tool-call

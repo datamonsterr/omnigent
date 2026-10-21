@@ -64,9 +64,9 @@ EXAMPLE_PIN_PATHS = frozenset(
     for worker in (
         "claude_sonnet",
         "claude_haiku",
-        "opencode-kimi",
+        "opencode-minimax",
         "opencode-glm",
-        "opencode-qwen",
+        "opencode-deepseek",
     )
 )
 
