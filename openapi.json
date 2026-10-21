@@ -5708,6 +5708,11 @@
       },
       "ServerInfoResponse": {
         "properties": {
+          "account_pools_enabled": {
+            "default": false,
+            "title": "Account Pools Enabled",
+            "type": "boolean"
+          },
           "accounts_enabled": {
             "title": "Accounts Enabled",
             "type": "boolean"
@@ -5859,6 +5864,11 @@
           },
           "smart_routing_enabled": {
             "title": "Smart Routing Enabled",
+            "type": "boolean"
+          },
+          "smart_routing_external_requires_gateway": {
+            "default": true,
+            "title": "Smart Routing External Requires Gateway",
             "type": "boolean"
           },
           "smart_routing_sources": {

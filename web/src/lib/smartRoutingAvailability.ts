@@ -41,7 +41,7 @@ export type SmartRoutingUnavailableCause =
   | { kind: "not-gateway-backed"; harnesses: string[] };
 
 /** The routers that can answer a Smart Routing pick. */
-export type RouterSource = "databricks-aigw" | "oss-llm";
+export type RouterSource = "databricks-aigw" | "external-router" | "oss-llm";
 
 /**
  * Which router would answer a pick for one harness family — the browser-side
@@ -59,8 +59,13 @@ export function smartRoutingSourceFor(inputs: {
   externalConfigured: boolean;
   ossConfigured: boolean;
   gatewayBacked: boolean;
+  externalRequiresGateway?: boolean;
 }): RouterSource | null {
-  if (inputs.externalConfigured && inputs.gatewayBacked) return "databricks-aigw";
+  if (
+    inputs.externalConfigured &&
+    (inputs.gatewayBacked || inputs.externalRequiresGateway === false)
+  )
+    return inputs.externalRequiresGateway === false ? "external-router" : "databricks-aigw";
   if (inputs.ossConfigured) return "oss-llm";
   return null;
 }
@@ -91,6 +96,7 @@ export function smartRoutingUnavailableReason(inputs: {
   unreadyHarnesses: readonly string[];
   notGatewayBackedHarnesses?: readonly string[];
   externalRoutingAvailable?: boolean;
+  externalRequiresGateway?: boolean;
 }): SmartRoutingUnavailableCause | null {
   if (!inputs.routingEnabled) return { kind: "routing-disabled" };
   if (inputs.externalRoutingAvailable === false) return { kind: "external-router-required" };
@@ -99,7 +105,7 @@ export function smartRoutingUnavailableReason(inputs: {
     return { kind: "harnesses-unready", harnesses: [...inputs.unreadyHarnesses] };
   }
   const notBacked = inputs.notGatewayBackedHarnesses ?? [];
-  if (notBacked.length > 0) {
+  if (notBacked.length > 0 && inputs.externalRequiresGateway !== false) {
     return { kind: "not-gateway-backed", harnesses: [...notBacked] };
   }
   return null;

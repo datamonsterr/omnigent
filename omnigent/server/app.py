@@ -197,6 +197,7 @@ class ServerInfoResponse(BaseModel):
     server_version: str
     smart_routing_enabled: bool
     smart_routing_sources: SmartRoutingSourcesInfo
+    smart_routing_external_requires_gateway: bool = True
     # The server keeps a harness account inventory (DB-backed pools). Absent on
     # older servers, which clients treat as "no account picker".
     account_pools_enabled: bool = False
@@ -3143,13 +3144,22 @@ def create_app(
         # for a deployment whose sources say a router would answer.
         try:
             from omnigent.runtime._globals import _caps
-            from omnigent.server.routing_backend import routing_available, routing_sources
+            from omnigent.server.routing_backend import (
+                backends_from_caps,
+                routing_available,
+                routing_sources,
+                usable_external,
+            )
 
             smart_routing_enabled = routing_available(_caps)
             smart_routing_sources = routing_sources(_caps)
+            external_requires_gateway = getattr(
+                usable_external(backends_from_caps(_caps)), "requires_gateway_inference", True
+            )
         except ImportError:
             smart_routing_enabled = False
             smart_routing_sources = {"external": False, "oss": False}
+            external_requires_gateway = True
         # The immutable feature snapshot is shared by capability
         # advertisement and route enforcement, so frontend and backend cannot
         # disagree during a process lifetime.
@@ -3191,6 +3201,7 @@ def create_app(
                 "smart_routing_enabled": smart_routing_enabled,
                 "account_pools_enabled": account_pool_store is not None,
                 "smart_routing_sources": smart_routing_sources,
+                "smart_routing_external_requires_gateway": external_requires_gateway,
                 "features": app.state.feature_flags.frontend_dict(),
                 "harness_install_enabled": harness_install_enabled,
                 "installable_harnesses": installable_harnesses,

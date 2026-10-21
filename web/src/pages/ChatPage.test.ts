@@ -1911,6 +1911,13 @@ describe("routing eligibility gates", () => {
     // External-only: the family must be gateway-backed on the session's host.
     const externalOnly = info(true, { external: true, oss: false });
     expect(
+      isCostRoutingEligible(
+        { ...externalOnly, smart_routing_external_requires_gateway: false },
+        nativeSession,
+        { gateway_inference: { "claude-native": false } },
+      ),
+    ).toBe(true);
+    expect(
       isCostRoutingEligible(externalOnly, nativeSession, {
         gateway_inference: { "claude-native": false },
       }),

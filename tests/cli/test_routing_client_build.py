@@ -81,6 +81,29 @@ def test_an_explicit_external_provider_plus_an_llm_block_gets_both() -> None:
     assert isinstance(backends.local, LLMRoutingClient)
 
 
+@pytest.mark.parametrize("with_judge", [False, True])
+def test_generic_external_config_can_route_without_gateway_inference(with_judge: bool) -> None:
+    from omnigent.cli import parse_routing_settings
+    from omnigent.server.routing_backend import select_router
+
+    cfg = {
+        "routing": {
+            "provider": "external",
+            "base_url": "https://router.example.invalid/v1",
+            "router_name": "task_v0",
+        }
+    }
+    with _policy_client():
+        backends = _build_routing_backends(
+            cfg, _server_llm() if with_judge else None, parse_routing_settings(cfg["routing"])
+        )
+
+    choice = select_router(backends, gateway_backed=False)
+
+    assert choice is not None
+    assert choice.client is backends.external
+
+
 def test_provider_none_configures_neither_backend(workspace: Any) -> None:
     del workspace
     cfg = {

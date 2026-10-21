@@ -1354,6 +1354,80 @@ async def test_top_level_smart_routing_create_succeeds_off_the_gateway_with_the_
     assert decisions and decisions[0]["router_source"] == "oss-llm"
 
 
+@pytest.mark.parametrize("harness", ["auto", "claude-native", "codex-native"])
+async def test_generic_external_config_routes_native_catalog_without_gateway(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    respx_mock: Any,
+    harness: str,
+) -> None:
+    from omnigent.cli import _build_routing_backends, parse_routing_settings
+    from omnigent.server.routes._sessions import orchestration
+
+    wrappers = await _native_wrappers(client, db_uri)
+    routing_cfg = {
+        "provider": "external",
+        "base_url": "https://router.example.invalid/v1",
+        "router_name": "task_v0",
+        "api_key": "test-routing-token",
+    }
+    settings = parse_routing_settings(routing_cfg)
+    backends = _build_routing_backends({"routing": routing_cfg}, None, settings)
+    picked_model = "claude-opus-4-8" if harness == "claude-native" else "gpt-5-5"
+    route = respx_mock.post("https://router.example.invalid/v1/routes:select").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "route_selection": [{"route_option": {"model": picked_model}}],
+                "rationale": "catalog choice",
+            },
+        )
+    )
+    host = _host_reporting({"claude-native": False, "codex-native": False})
+    with (
+        patch(
+            "omnigent.runtime._globals._caps",
+            new=FakeCaps(routing_backends=backends, routing_settings=settings),
+        ),
+        patch.object(orchestration, "_routing_host_for_create", return_value=host),
+        patch.object(
+            orchestration,
+            "_pre_session_model_catalog",
+            AsyncMock(return_value=dict(_OFF_GATEWAY_CATALOG)),
+        ),
+    ):
+        created = await client.post(
+            "/v1/sessions",
+            json={
+                "agent_id": wrappers["claude-native" if harness == "auto" else harness],
+                "harness_override": harness,
+                "cost_control_mode_override": "on",
+                "smart_routing_message": ROUTING_MESSAGE,
+            },
+        )
+
+    assert created.status_code == 201, created.text
+    assert created.json()["model_override"] == picked_model
+    assert (
+        created.json()["agent_id"]
+        == wrappers["claude-native" if harness == "claude-native" else "codex-native"]
+    )
+    assert route.call_count == 1
+    items = (await client.get(f"/v1/sessions/{created.json()['id']}/items")).json()["data"]
+    decisions = [item for item in items if item["type"] == "routing_decision"]
+    assert decisions and decisions[0]["router_source"] == "external-router"
+    request = route.calls[0].request
+    assert request.headers["Authorization"] == "Bearer test-routing-token"
+    offered = {entry["model"] for entry in json.loads(request.content)["route_options"]}
+    expected = (
+        {"claude-opus-4-8", "gpt-5-5"} if harness == "auto" else set(_OFF_GATEWAY_CATALOG[harness])
+    )
+    assert offered == expected
+    from omnigent.server.routing_backend import reported_gateway_inference
+
+    assert reported_gateway_inference(host) == {"claude-native": False, "codex-native": False}
+
+
 @pytest.mark.parametrize("harness", list(AUTO_NATIVE_ROUTING_HARNESSES))
 async def test_fixed_harness_routing_create_is_rejected_when_no_router_can_serve(
     client: httpx.AsyncClient,

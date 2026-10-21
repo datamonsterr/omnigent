@@ -2351,6 +2351,8 @@ export function NewChatLandingScreen() {
   // family. Read once here and reused by every routing gate below. "loading"
   // reads as neither, so no routing surface flashes in before the probe lands.
   const externalRoutingConfigured = info !== "loading" && info.smart_routing_sources.external;
+  const externalRoutingRequiresGateway =
+    info === "loading" || info.smart_routing_external_requires_gateway !== false;
   const ossRoutingConfigured = info !== "loading" && info.smart_routing_sources.oss;
   // Gates the whole UI-driven setup experience (Set up affordance + dialog +
   // collapsed badge). OFF → the composer/picker fall back to the original
@@ -3426,6 +3428,7 @@ export function NewChatLandingScreen() {
     SMART_ROUTING_ARMS.some((harness) => harness === selectedNativeHarness) &&
     smartRoutingSourceFor({
       externalConfigured: externalRoutingConfigured,
+      externalRequiresGateway: externalRoutingRequiresGateway,
       ossConfigured: ossRoutingConfigured,
       gatewayBacked: hostBacksHarnessWithGateway(harnessWarningHost, selectedNativeHarness),
     }) !== null;
@@ -3441,6 +3444,7 @@ export function NewChatLandingScreen() {
     (harness) =>
       smartRoutingSourceFor({
         externalConfigured: externalRoutingConfigured,
+        externalRequiresGateway: externalRoutingRequiresGateway,
         ossConfigured: ossRoutingConfigured,
         gatewayBacked: hostBacksHarnessWithGateway(harnessWarningHost, harness),
       }) !== null,
@@ -4560,11 +4564,18 @@ export function NewChatLandingScreen() {
         // rewrites through. The built-in judge routes a model inside one
         // harness and can't stand in here.
         externalRoutingAvailable: externalRoutingConfigured,
+        externalRequiresGateway: externalRoutingRequiresGateway,
         notGatewayBackedHarnesses: SMART_ROUTING_ARMS.filter(
           (harness) => !hostBacksHarnessWithGateway(harnessWarningHost, harness),
         ),
       }),
-    [smartRoutingEnabled, smartRoutingWrappers, harnessWarningHost, externalRoutingConfigured],
+    [
+      smartRoutingEnabled,
+      smartRoutingWrappers,
+      harnessWarningHost,
+      externalRoutingConfigured,
+      externalRoutingRequiresGateway,
+    ],
   );
   const smartRoutingHarnessAvailable = smartRoutingUnavailableCause === null;
   // The fully-auto brain needs SOME router able to answer for both model

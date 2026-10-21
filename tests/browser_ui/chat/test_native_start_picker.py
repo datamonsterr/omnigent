@@ -14,7 +14,12 @@ from tests.browser_ui.chat.session_contract import ChatSessionContract
 
 
 def _open_picker(
-    page: Page, chat: ChatSessionContract, harness: str, *, sdk_kimi: bool = False
+    page: Page,
+    chat: ChatSessionContract,
+    harness: str,
+    *,
+    sdk_kimi: bool = False,
+    native_auto: bool = False,
 ) -> list[dict[str, Any]]:
     agent_id = f"ag_{harness}_browser"
     wrapper = f"{harness}-ui"
@@ -38,10 +43,24 @@ def _open_picker(
             }
         )
     contract = chat.contract
+    if native_auto:
+        agents.append(
+            {"id": "ag_codex_native", "name": "codex-native-ui", "harness": "codex-native"}
+        )
+        contract.json(
+            "/v1/info",
+            {
+                "single_user": True,
+                "smart_routing_enabled": True,
+                "smart_routing_sources": {"external": True, "oss": False},
+                "smart_routing_external_requires_gateway": False,
+            },
+        )
     contract.json("/v1/agents", {"data": agents})
     contract.json(OWN_AGENTS, {"data": []})
     contract.json("/v1/sessions", {"data": []})
     contract.json("/v1/skills", {"skills": []})
+    contract.json(re.compile(r"/v1/account-pools(?:\?.*)?$"), {"data": []})
     contract.json(
         "/v1/hosts",
         {
@@ -51,7 +70,14 @@ def _open_picker(
                     "name": "browser-host",
                     "owner": "browser",
                     "status": "online",
-                    "configured_harnesses": {harness: True},
+                    "configured_harnesses": (
+                        {"claude-native": True, "codex-native": True}
+                        if native_auto
+                        else {harness: True}
+                    ),
+                    "gateway_inference": (
+                        {"claude-native": False, "codex-native": False} if native_auto else None
+                    ),
                 }
             ]
         },
@@ -85,6 +111,29 @@ def _open_picker(
     page.goto(chat.base_url)
     expect(page.get_by_test_id("new-chat-landing-input")).to_be_visible()
     return creates
+
+
+def test_generic_external_router_offers_and_submits_native_auto(
+    page: Page, chat_session_contract: ChatSessionContract
+) -> None:
+    creates = _open_picker(page, chat_session_contract, "claude-native", native_auto=True)
+    page.get_by_test_id("new-chat-landing-agent-select").click()
+    choice = page.get_by_test_id("new-chat-landing-harness-smart-routing")
+    expect(choice).to_be_visible()
+    choice.click()
+    prompt = "Review this repository and suggest one small improvement."
+    page.get_by_test_id("new-chat-landing-input").fill(prompt)
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST" and response.url.endswith("/v1/sessions")
+        )
+    ):
+        page.get_by_test_id("new-chat-landing-submit").click()
+    assert len(creates) == 1
+    assert creates[0]["harness_override"] == "auto"
+    assert creates[0]["cost_control_mode_override"] == "on"
+    assert creates[0]["smart_routing_message"] == prompt
+    assert not creates[0].get("model_override")
 
 
 @pytest.mark.parametrize(
