@@ -74,19 +74,9 @@ jobs:
         run: |
           trivy convert --scanners vuln --format table --output "$REPORT_DIR/trivy-results.txt" "$REPORT_DIR/trivy-results.json"
           trivy convert --format sarif --output "$REPORT_DIR/trivy-results.sarif" "$REPORT_DIR/trivy-results.json"
-          # Converted SARIF must resolve paths against the scanned source, not the JSON file.
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          path = Path(os.environ["REPORT_DIR"]) / "trivy-results.sarif"
-          report = json.loads(path.read_text())
-          source = Path(os.environ["GITHUB_WORKSPACE"]) / os.environ["SCAN_PATH"]
-          for run in report["runs"]:
-              run["originalUriBaseIds"]["ROOTPATH"]["uri"] = source.resolve().as_uri() + "/"
-          path.write_text(json.dumps(report) + "\n")
-          PY
+          # Normalize SARIF paths and map unique pnpm findings to package declarations.
+          python3 .github/scripts/security-scan/trivy-lockfile-locations.py \
+            "$REPORT_DIR/trivy-results.sarif" "$GITHUB_WORKSPACE/$SCAN_PATH"
           cat "$REPORT_DIR/trivy-results.txt"
           {
             echo '## Trivy CVE scan (report-only)'
