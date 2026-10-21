@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { AccountSelect } from "@/components/composer/AccountSelect";
 import { BRAIN_HARNESS_LABELS, useBrainHarnessLabels } from "@/lib/agentLabels";
 import type { AgentBundleInput, MCPServerInput } from "@/lib/agentBundle";
 
@@ -299,7 +300,8 @@ function useAgentFormFields() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [instructions, setInstructions] = useState("");
-  const [harness, setHarness] = useState(DEFAULT_HARNESS);
+  const [harness, setHarnessValue] = useState(DEFAULT_HARNESS);
+  const [accountId, setAccountId] = useState<string | null>(null);
   const [model, setModel] = useState("");
   const [mcpEntries, setMcpEntries] = useState<MCPFormEntry[]>([]);
   const [nextKey, setNextKey] = useState(0);
@@ -308,10 +310,17 @@ function useAgentFormFields() {
     setName("");
     setDescription("");
     setInstructions("");
-    setHarness(DEFAULT_HARNESS);
+    setHarnessValue(DEFAULT_HARNESS);
+    setAccountId(null);
     setModel("");
     setMcpEntries([]);
     setNextKey(0);
+  }
+
+  // An account belongs to one harness's pool, so a harness switch resets it.
+  function setHarness(next: string) {
+    setHarnessValue(next);
+    setAccountId(null);
   }
 
   function addMCPServer() {
@@ -337,6 +346,7 @@ function useAgentFormFields() {
       instructions: instructions.trim() || undefined,
       harness,
       model: model.trim(),
+      accountId,
       mcpServers: toMCPInputs(mcpEntries),
     };
   }
@@ -351,6 +361,8 @@ function useAgentFormFields() {
     harness,
     setHarness,
     harnessOptions,
+    accountId,
+    setAccountId,
     model,
     setModel,
     mcpEntries,
@@ -374,6 +386,8 @@ function AgentFormFields({
   harness,
   setHarness,
   harnessOptions,
+  accountId,
+  setAccountId,
   model,
   setModel,
   mcpEntries,
@@ -450,6 +464,15 @@ function AgentFormFields({
           </SelectContent>
         </Select>
       </div>
+
+      {/* Account: shown only when a pool serves the harness */}
+      <AccountSelect
+        harness={harness}
+        value={accountId}
+        onChange={setAccountId}
+        testId="create-agent-account"
+        label="Account"
+      />
 
       {/* Model */}
       <div className="flex flex-col gap-1.5">

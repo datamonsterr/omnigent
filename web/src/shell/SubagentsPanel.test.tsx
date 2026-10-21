@@ -161,6 +161,43 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("SubagentsPanel", () => {
+  it("shows a child's actual account, model and effort", () => {
+    mockChildTree({
+      conv_parent: [
+        childInfo({
+          id: "conv_child",
+          account_id: "codex-2",
+          model: "actual-model",
+          reasoning_effort: "high",
+        }),
+      ],
+    });
+    const { container } = renderPanel();
+    const row = childRow(container, "conv_child");
+    expect(within(row).getByText("codex-2")).toBeVisible();
+    expect(within(row).getByText("actual-model")).toBeVisible();
+    expect(within(row).getByText("high")).toBeVisible();
+  });
+
+  it("shows the main session's actual account, model and effort", () => {
+    mockChildTree({});
+    const current = useSessionMock.getMockImplementation()!("conv_root");
+    useSessionMock.mockReturnValue({
+      ...current,
+      session: {
+        ...current.session!,
+        labels: { "omnigent.account.id": "agy-2" },
+        llmModel: "actual-model",
+        reasoningEffort: "high",
+      },
+    });
+    renderPanel();
+    const row = screen.getByTestId("subagent-main-row");
+    expect(within(row).getByText("agy-2")).toBeVisible();
+    expect(within(row).getByText("actual-model")).toBeVisible();
+    expect(within(row).getByText("high")).toBeVisible();
+  });
+
   it("always renders a 'main' row linking to the root session", () => {
     // No children at all — the panel still shows the main link so
     // the user always has a path back to the parent.

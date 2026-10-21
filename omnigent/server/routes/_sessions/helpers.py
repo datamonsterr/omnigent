@@ -11203,6 +11203,9 @@ def _child_session_summary_from_conversation(
         # conversation label rather than a new column.
         routed_model=conv.model_override if routing_decision_id is not None else None,
         routing_decision_id=routing_decision_id,
+        account_id=labels.get("omnigent.account.id") or labels.get("account_id"),
+        model=conv.reported_model,
+        reasoning_effort=conv.reasoning_effort,
     )
 
 

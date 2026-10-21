@@ -11148,6 +11148,96 @@ async def _resolve_native_smart_routing(
     return native_agent.agent_name, model, verdict, None
 
 
+async def _assign_session_account(
+    request: Request | None,
+    initial_labels: dict[str, str],
+    *,
+    spec: AgentSpec | None,
+    harness: str | None,
+    sub_agent_name: str | None,
+    conversation_store: ConversationStore,
+    model: str | None,
+) -> tuple[Any | None, Any | None]:
+    """Assign the account a new session runs under.
+
+    The agent's default account seeds the pin only when the session carries
+    none, then the pool manager resolves the pin (or picks one) and writes the
+    credential home onto *initial_labels*.
+
+    :param request: The create request, used to reach the pool manager.
+    :param initial_labels: The new session's labels, updated in place.
+    :param spec: The agent spec carrying ``executor.config.account_id``.
+    :param harness: The session's harness, used to resolve the pool.
+    :param sub_agent_name: The sub-agent name, used to resolve the pool.
+    :param conversation_store: Store the manager counts active sessions in.
+    :param model: The model the session would run.
+    :returns: The pool manager and the launch reservation, each ``None``
+        when account pools are off or nothing was reserved.
+    :raises OmnigentError: When the pool has no eligible account or a pin
+        conflicts with its credential home.
+    """
+    from omnigent.account_pools.manager import (
+        AccountPoolExhaustedError,
+        prepare_session_account,
+        seed_agent_account_label,
+    )
+
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    manager = getattr(app_state, "account_pool_manager", None)
+    if manager is None:
+        return None, None
+    seeded_default = seed_agent_account_label(initial_labels, spec)
+    try:
+        handle = await asyncio.to_thread(
+            prepare_session_account,
+            initial_labels=initial_labels,
+            harness=harness,
+            sub_agent_name=sub_agent_name,
+            manager=manager,
+            conversation_store=conversation_store,
+            model=model,
+            allow_stale_default=seeded_default,
+        )
+    except (AccountPoolExhaustedError, ValueError) as exc:
+        raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+    except OmnigentError:
+        raise
+    except Exception as exc:
+        raise OmnigentError(
+            f"Failed to assign account from pool: {exc}",
+            code=ErrorCode.INVALID_INPUT,
+        ) from exc
+    return manager, handle
+
+
+async def _hand_off_session_account(
+    manager: Any | None,
+    handle: Any | None,
+    conversation_store: ConversationStore,
+    conversation_id: str,
+    account_id: str | None,
+) -> None:
+    """Release a launch reservation once the new session's row is countable.
+
+    Releasing earlier opens a window where a concurrent create sees neither
+    the reservation nor the row and picks the same account twice.
+
+    :param manager: The pool manager that holds the reservation, or ``None``.
+    :param handle: The launch reservation, or ``None``.
+    :param conversation_store: Store the new session was written to.
+    :param conversation_id: The new session's id.
+    :param account_id: The account the session was assigned.
+    """
+    if manager is None or handle is None:
+        return
+    from omnigent.account_pools.manager import await_session_account_visible
+
+    await asyncio.to_thread(
+        await_session_account_visible, conversation_store, conversation_id, account_id
+    )
+    manager.reservation_tracker.release(handle)
+
+
 async def _create_session_from_existing_agent(
     conversation_store: ConversationStore,
     agent_store: AgentStore,
@@ -11810,41 +11900,16 @@ async def _create_session_from_existing_agent(
     # Account assignment: the pool inventory lives in the account pool store,
     # so the manager reads it per call and a runtime account change lands on
     # the next session create.
-    from omnigent.account_pools.manager import (
-        AccountPoolExhaustedError,
-        await_session_account_visible,
-    )
-
-    reservation_handle = None
     spec_for_env = sub_spec or own_spec or selection_spec
-    try:
-        app_state = getattr(getattr(request, "app", None), "state", None)
-        account_pool_mgr = getattr(app_state, "account_pool_manager", None)
-
-        if account_pool_mgr is not None:
-            from omnigent.account_pools.manager import prepare_session_account
-
-            reservation_handle = await asyncio.to_thread(
-                prepare_session_account,
-                initial_labels=initial_labels,
-                harness=selected_harness,
-                sub_agent_name=body.sub_agent_name,
-                manager=account_pool_mgr,
-                conversation_store=conversation_store,
-                model=model_override
-                or getattr(getattr(spec_for_env, "executor", None), "model", None),
-            )
-    except AccountPoolExhaustedError as exc:
-        raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
-    except ValueError as exc:
-        raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
-    except OmnigentError:
-        raise
-    except Exception as exc:
-        raise OmnigentError(
-            f"Failed to assign account from pool: {exc}",
-            code=ErrorCode.INVALID_INPUT,
-        ) from exc
+    account_pool_mgr, reservation_handle = await _assign_session_account(
+        request,
+        initial_labels,
+        spec=spec_for_env,
+        harness=selected_harness,
+        sub_agent_name=body.sub_agent_name,
+        conversation_store=conversation_store,
+        model=model_override or getattr(getattr(spec_for_env, "executor", None), "model", None),
+    )
 
     snapshot_kwargs: dict[str, Any] = (
         {"inference_snapshot": inference_snapshot} if inference_snapshot is not None else {}
@@ -11893,20 +11958,14 @@ async def _create_session_from_existing_agent(
                 harness_override=harness_override,
                 **snapshot_kwargs,
             )
-        if reservation_handle is not None and account_pool_mgr is not None:
-            # Hand the launch reservation to the persisted startup-window
-            # count: only release it once the new session's row is visible
-            # to the counter. Releasing earlier opens a window where a
-            # concurrent create sees neither the reservation nor the row
-            # and picks the same account twice.
-            await asyncio.to_thread(
-                await_session_account_visible,
-                conversation_store,
-                conv.id,
-                initial_labels.get(ACCOUNT_ID_LABEL_KEY),
-            )
-            account_pool_mgr.reservation_tracker.release(reservation_handle)
-            reservation_handle = None
+        await _hand_off_session_account(
+            account_pool_mgr,
+            reservation_handle,
+            conversation_store,
+            conv.id,
+            initial_labels.get(ACCOUNT_ID_LABEL_KEY),
+        )
+        reservation_handle = None
     except NameAlreadyExistsError as exc:
         if reservation_handle is not None and account_pool_mgr is not None:
             account_pool_mgr.reservation_tracker.release(reservation_handle)
