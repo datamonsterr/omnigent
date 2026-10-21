@@ -51,6 +51,17 @@
       "AgentConfigObject": {
         "description": "Owner-only configuration read and PATCH result.",
         "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
           "description": {
             "anyOf": [
               {
@@ -128,6 +139,19 @@
         "additionalProperties": false,
         "description": "Merge-style update of an owned agent, with immutable identity.",
         "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
           "description": {
             "anyOf": [
               {
@@ -892,6 +916,17 @@
       "ChildSessionSummary": {
         "description": "Summary of a sub-agent (child) session under a parent session.\n\nPowers `GET /v1/sessions/{id}/child_sessions`. Lets the web /\nREPL debug surface enumerate sub-agent calls spawned from a\nparent session without parsing parent `function_call_output`\nJSON handles (the legacy TUI Ctrl+O path). The endpoint is the\ncanonical \"historical truth\" source; the existing transient\n`session.created` SSE event handles live incremental updates.\n\nFields are derived from the child `Conversation` plus its\nlatest `Task` (newest by `created_at`).",
         "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
           "agent_id": {
             "anyOf": [
               {
@@ -998,6 +1033,17 @@
             "description": "Error details from the child's most recent failed run, e.g. `{\"code\": \"required_terminal_exited\", \"message\": \"...\"}`. `None` when the child has no durable failure detail. This is the typed projection of runner-owned failure labels; clients should not parse those labels directly.",
             "title": "Last Task Error"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "object": {
             "default": "child_session",
             "description": "Fixed resource type, always `\"child_session\"`.",
@@ -1015,6 +1061,17 @@
             "format": "int64",
             "title": "Pending Elicitations Count",
             "type": "integer"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
           },
           "routed_model": {
             "anyOf": [
@@ -5708,6 +5765,11 @@
       },
       "ServerInfoResponse": {
         "properties": {
+          "account_pools_enabled": {
+            "default": false,
+            "title": "Account Pools Enabled",
+            "type": "boolean"
+          },
           "accounts_enabled": {
             "title": "Accounts Enabled",
             "type": "boolean"

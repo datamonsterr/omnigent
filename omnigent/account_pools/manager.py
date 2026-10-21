@@ -406,6 +406,7 @@ def prepare_session_account(
     manager: AccountPoolManager,
     conversation_store: Any | None = None,
     model: str | None = None,
+    allow_stale_default: bool = False,
 ) -> ReservationHandle | None:
     """Assign the account a new session runs under.
 
@@ -420,6 +421,7 @@ def prepare_session_account(
     :param manager: The account pool manager.
     :param conversation_store: The conversation store, when the manager has
         none.
+    :param allow_stale_default: Allow an unavailable saved agent default to fall back.
     :param model: The model the session would run.
     :returns: The reservation handle when an account was reserved, else
         ``None``.
@@ -452,13 +454,30 @@ def prepare_session_account(
         )
 
     pinned_account = manager.store.get_account(pinned_id) if pinned_id else None
-    if pinned_id and (pinned_account is None or not pinned_account.enabled):
+    pinned_pool = manager.store.get_pool(pinned_account.pool_id) if pinned_account else None
+    wrong_harness = (
+        pinned_pool is not None
+        and harness is not None
+        and (
+            pinned_pool.harness.removesuffix("-native").removesuffix("-sdk")
+            != harness.removesuffix("-native").removesuffix("-sdk")
+        )
+    )
+    if pinned_id and (pinned_account is None or not pinned_account.enabled or wrong_harness):
+        if not allow_stale_default:
+            raise AccountNotFoundError(
+                f"Account {pinned_id!r} is unknown, disabled, or incompatible with {harness!r}"
+            )
         # A stale pin (removed or disabled account) must not launch without a
         # credential home, so the pool's own pick takes over.
         _logger.warning(
             "Pinned account %r is %s; falling back to automatic selection",
             pinned_id,
-            "unknown" if pinned_account is None else "disabled",
+            "incompatible"
+            if wrong_harness
+            else "unknown"
+            if pinned_account is None
+            else "disabled",
         )
         initial_labels.pop(ACCOUNT_ID_LABEL_KEY, None)
         initial_labels.pop(LEGACY_ACCOUNT_ID_LABEL_KEY, None)
@@ -503,7 +522,7 @@ def prepare_session_account(
     return None
 
 
-def seed_agent_account_label(initial_labels: dict[str, str], spec: Any | None) -> None:
+def seed_agent_account_label(initial_labels: dict[str, str], spec: Any | None) -> bool:
     """Seed a session's account pin from its agent's default account.
 
     A session-level pin or credential home always wins, so the agent default
@@ -512,15 +531,18 @@ def seed_agent_account_label(initial_labels: dict[str, str], spec: Any | None) -
     :param initial_labels: The session's labels, updated in place.
     :param spec: The agent spec whose ``executor.config.account_id`` names the
         default account, or ``None``.
+    :returns: Whether the pin came from the saved agent default.
     """
     if spec is None:
-        return
+        return False
     if any(
         initial_labels.get(key)
         for key in (ACCOUNT_ID_LABEL_KEY, LEGACY_ACCOUNT_ID_LABEL_KEY, *ACCOUNT_HOME_LABEL_KEYS)
     ):
-        return
+        return False
     config = getattr(getattr(spec, "executor", None), "config", None)
     account_id = config.get(AGENT_ACCOUNT_CONFIG_KEY) if isinstance(config, dict) else None
     if isinstance(account_id, str) and account_id.strip():
         initial_labels[ACCOUNT_ID_LABEL_KEY] = account_id.strip()
+        return True
+    return False

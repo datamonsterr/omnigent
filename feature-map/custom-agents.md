@@ -72,7 +72,11 @@ requires `user_owned: true` and `agent_config_edit: true`.
   `omnigent.account.id` and `omnigent.codex.codex_home` labels name that
   account. In the edit form, change or clear the account and confirm PATCH sends
   only `account_id`. A composer account pick overrides the agent default. The
-  same field is in the new-session Create custom agent dialog.
+  same field is in the new-session Create custom agent dialog. Antigravity
+  accounts use `gemini_dir` when added in Settings > Accounts. Explicit invalid
+  account selections reject; a removed saved agent default falls back to the pool.
+  Open the session's Agents rail and verify its account, reported model, and effort
+  chips, including child rows after spawning an agent.
 - Delete: cancel once and verify the agent remains, then delete and verify the
   list and API omit it. For an agent used by a session, verify the initial
   deletion reports the count and waits for Remove anyway. Only that action

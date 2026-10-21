@@ -63,8 +63,15 @@ export function SettingsAccountsSection() {
     onSuccess: invalidate,
   });
   const addAccount = useMutation({
-    mutationFn: ({ poolId, id, path }: { poolId: string; id: string; path: string }) =>
-      createAccount(poolId, { id: id.trim(), home_path: path.trim(), home_kind: "codex_home" }),
+    mutationFn: ({ pool, id, path }: { pool: AccountPool; id: string; path: string }) =>
+      createAccount(pool.id, {
+        id: id.trim(),
+        home_path: path.trim(),
+        home_kind:
+          pool.harness.replace(/-native$|-sdk$/g, "") === "antigravity"
+            ? "gemini_dir"
+            : "codex_home",
+      }),
     onSuccess: invalidate,
   });
   const toggleAccount = useMutation({
@@ -140,7 +147,7 @@ export function SettingsAccountsSection() {
           onAddAccount={() => {
             const draft = accountDrafts[pool.id];
             if (!draft?.id.trim() || !draft.path.trim()) return;
-            addAccount.mutate({ poolId: pool.id, id: draft.id, path: draft.path });
+            addAccount.mutate({ pool, id: draft.id, path: draft.path });
             setAccountDrafts((current) => ({ ...current, [pool.id]: { id: "", path: "" } }));
           }}
           onToggleAccount={(accountId, enabled) => toggleAccount.mutate({ accountId, enabled })}

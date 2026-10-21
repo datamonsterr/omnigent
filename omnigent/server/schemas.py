@@ -933,6 +933,9 @@ class ChildSessionSummary(BaseModel):
     last_task_error: dict[str, str] | None = None
     last_message_preview: str | None = None
     pending_elicitations_count: int = 0
+    account_id: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
     routed_model: str | None = None
     routing_decision_id: str | None = None
 

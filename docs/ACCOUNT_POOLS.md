@@ -81,13 +81,18 @@ idempotent.
 2. Otherwise the agent's default account (`executor.config.account_id`)
    pins the session. This applies to both the agent-id create and the
    multipart bundle create.
-3. A pin to an account that is removed or disabled is dropped with a logged
-   warning, and the pool picks instead.
+3. An explicit unknown, disabled, or wrong-harness account is rejected. A stale
+   saved agent default falls back to the pool. A session account or home takes
+   precedence over the agent default account and home.
 4. Otherwise the pool that serves the session's harness ranks its enabled
    accounts: fewest active sessions, then known quota before unknown, then
    the most remaining five-hour and weekly quota, then the account id.
 5. Accounts with exhausted or blocked quota are skipped. A pool with no
    eligible account fails the create — a session never runs unassigned.
+
+The Agents rail shows the selected account, harness-reported model, and reasoning
+effort for the main session and child rows. A requested model is not presented
+as the child's actual model before the harness reports it.
 
 The runner reads the chosen home from the session labels. Both `codex-native`
 and the SDK `codex` harness bridge Codex auth and config from

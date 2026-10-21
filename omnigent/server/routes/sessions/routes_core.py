@@ -1344,7 +1344,7 @@ def register_core_routes(
                 account_labels.get(ACCOUNT_ID_LABEL_KEY),
             )
         except BaseException:
-            if reservation_handle is not None:
+            if reservation_handle is not None and account_pool_mgr is not None:
                 account_pool_mgr.reservation_tracker.release(reservation_handle)
             raise
         session_created(

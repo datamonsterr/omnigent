@@ -11186,7 +11186,7 @@ async def _assign_session_account(
     manager = getattr(app_state, "account_pool_manager", None)
     if manager is None:
         return None, None
-    seed_agent_account_label(initial_labels, spec)
+    seeded_default = seed_agent_account_label(initial_labels, spec)
     try:
         handle = await asyncio.to_thread(
             prepare_session_account,
@@ -11196,6 +11196,7 @@ async def _assign_session_account(
             manager=manager,
             conversation_store=conversation_store,
             model=model,
+            allow_stale_default=seeded_default,
         )
     except (AccountPoolExhaustedError, ValueError) as exc:
         raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
@@ -11855,7 +11856,9 @@ async def _create_session_from_existing_agent(
     # Forward custom codex_home or gemini_dir from agent spec config/labels
     # so runner terminals isolate correctly.
     spec_for_env = sub_spec or own_spec or selection_spec
-    if spec_for_env is not None:
+    if spec_for_env is not None and not (
+        initial_labels.get("omnigent.account.id") or initial_labels.get("account_id")
+    ):
         exec_cfg = getattr(spec_for_env.executor, "config", None)
         if isinstance(exec_cfg, dict):
             if "codex_home" in exec_cfg and "omnigent.codex.codex_home" not in initial_labels:

@@ -21,7 +21,8 @@ from omnigent.account_pools.manager import AccountPoolManager
 from omnigent.account_pools.quota import AccountQuota
 from omnigent.entities.account_pool import HOME_KIND_CODEX, HOME_KIND_GEMINI
 from omnigent.stores.account_pool_store.sqlalchemy_store import SqlAlchemyAccountPoolStore
-from tests.server.helpers import create_test_agent, create_test_session
+from tests._helpers.session import post_session_bundle
+from tests.server.helpers import build_agent_bundle, create_test_agent, create_test_session
 
 
 @pytest.fixture
@@ -360,15 +361,75 @@ async def test_bundle_create_assigns_agent_default_or_session_account(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("account_id", ["codex-removed", "codex-2", "agy-1"])
 async def test_stale_agent_default_account_falls_back_to_pool_pick(
     client: AsyncClient,
     account_pool_store: SqlAlchemyAccountPoolStore,
+    account_id: str,
 ) -> None:
     """A removed default account still launches the session with a pool account home."""
     _install_manager(client, account_pool_store)
+    account_pool_store.update_account("codex-2", enabled=False)
 
     session = await create_test_session(
-        client, name="bundle-stale", executor=_codex_agent_executor("codex-removed")
+        client, name="bundle-stale", executor=_codex_agent_executor(account_id)
     )
     assert session["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-1"
     assert session["labels"][CODEX_HOME_LABEL_KEY] == str(Path("/var/accounts/codex-1").resolve())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account_id", ["missing", "codex-2", "agy-1"])
+async def test_explicit_invalid_session_account_rejects(
+    client: AsyncClient,
+    account_pool_store: SqlAlchemyAccountPoolStore,
+    account_id: str,
+) -> None:
+    """Unknown, disabled and incompatible pins reject on both create transports."""
+    _install_manager(client, account_pool_store)
+    account_pool_store.update_account("codex-2", enabled=False)
+    agent = await create_test_agent(client)
+    response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent["id"],
+            "harness_override": "codex-native",
+            "labels": {ACCOUNT_ID_LABEL_KEY: account_id},
+        },
+    )
+    assert response.status_code == 400, response.text
+    response = await post_session_bundle(
+        client.post,
+        "/v1/sessions",
+        build_agent_bundle(name="invalid-pin", executor=_codex_agent_executor("codex-1")),
+        metadata={"labels": {ACCOUNT_ID_LABEL_KEY: account_id}},
+    )
+    assert response.status_code == 400, response.text
+
+
+@pytest.mark.asyncio
+async def test_session_account_overrides_agent_default_home(
+    client: AsyncClient,
+    account_pool_store: SqlAlchemyAccountPoolStore,
+) -> None:
+    """A session account replaces the agent's default account and credential home."""
+    _install_manager(client, account_pool_store)
+    executor = _codex_agent_executor("codex-2")
+    executor["config"]["codex_home"] = "/var/accounts/codex-2"
+    agent = await create_test_agent(client, executor=executor)
+    response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent["id"],
+            "labels": {ACCOUNT_ID_LABEL_KEY: "codex-1"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["labels"][CODEX_HOME_LABEL_KEY] == "/var/accounts/codex-1"
+    session = await create_test_session(
+        client,
+        name="override-default-home",
+        executor=executor,
+        labels={ACCOUNT_ID_LABEL_KEY: "codex-1"},
+    )
+    assert session["labels"][CODEX_HOME_LABEL_KEY] == "/var/accounts/codex-1"

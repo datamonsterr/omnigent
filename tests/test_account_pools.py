@@ -21,6 +21,7 @@ from omnigent.account_pools.labels import (
     GEMINI_DIR_LABEL_KEY,
 )
 from omnigent.account_pools.manager import (
+    AccountNotFoundError,
     AccountPoolExhaustedError,
     AccountPoolManager,
     prepare_session_account,
@@ -388,7 +389,9 @@ def test_child_creation_uses_chosen_identity_and_forwards_dirs() -> None:
 
 
 @pytest.mark.parametrize("stale", ["unknown", "disabled"])
-def test_stale_pin_falls_back_to_pool_pick(stale: str, caplog: pytest.LogCaptureFixture) -> None:
+def test_stale_saved_default_falls_back_to_pool_pick(
+    stale: str, caplog: pytest.LogCaptureFixture
+) -> None:
     """A pin to a removed or disabled account launches on the pool's pick."""
     disabled = _account("codex-old", "/data/codex-old")
     disabled.enabled = False
@@ -399,7 +402,11 @@ def test_stale_pin_falls_back_to_pool_pick(stale: str, caplog: pytest.LogCapture
     pinned = "codex-gone" if stale == "unknown" else "codex-old"
     labels = {ACCOUNT_ID_LABEL_KEY: pinned}
     handle = prepare_session_account(
-        initial_labels=labels, harness="codex", sub_agent_name=None, manager=mgr
+        initial_labels=labels,
+        harness="codex",
+        sub_agent_name=None,
+        manager=mgr,
+        allow_stale_default=True,
     )
 
     assert handle is not None
@@ -409,14 +416,34 @@ def test_stale_pin_falls_back_to_pool_pick(stale: str, caplog: pytest.LogCapture
     mgr.reservation_tracker.release(handle)
 
 
-def test_stale_pin_without_pool_drops_the_pin() -> None:
+def test_stale_saved_default_without_pool_drops_the_pin() -> None:
     """A stale pin with no pool to fall back to leaves the session unassigned."""
     labels = {ACCOUNT_ID_LABEL_KEY: "codex-gone"}
     handle = prepare_session_account(
-        initial_labels=labels, harness="codex", sub_agent_name=None, manager=_manager(FakeStore())
+        initial_labels=labels,
+        harness="codex",
+        sub_agent_name=None,
+        manager=_manager(FakeStore()),
+        allow_stale_default=True,
     )
     assert handle is None
     assert labels == {}
+
+
+@pytest.mark.parametrize("pin", ["missing", "disabled", "wrong-harness"])
+def test_explicit_invalid_account_rejects(pin: str) -> None:
+    """An explicit account choice must never silently use another identity."""
+    disabled = _account("disabled", "/data/disabled")
+    disabled.enabled = False
+    store = FakeStore(
+        [
+            _pool("codex", [disabled, _account("live", "/data/live")]),
+            _pool("antigravity", [_account("wrong-harness", "/data/gemini", HOME_KIND_GEMINI)]),
+        ]
+    )
+    labels = {ACCOUNT_ID_LABEL_KEY: pin}
+    with pytest.raises(AccountNotFoundError):
+        prepare_session_account(labels, "codex-native", None, _manager(store))
 
 
 @pytest.mark.parametrize(
