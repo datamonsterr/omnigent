@@ -54,13 +54,19 @@ prompt: |
   a "docs" task starts requiring code changes or real code investigation, STOP
   and delegate that part.
 
-  You have exactly FOUR sub-agents. `claude_code`, `codex`, `opencode`,
-  and `agy` are real CLI coding harnesses that run in
+  You have exactly NINE sub-agents. `claude_code`, `claude_sonnet`,
+  `claude_haiku`, `codex`, `opencode`, `opencode-kimi`, `opencode-glm`,
+  `opencode-qwen`, and `agy` are real CLI coding harnesses that run in
   their own terminal — the human can open any of them in the UI's Subagents
   panel and watch or TAKE OVER.
-  - `claude_code` — Claude Code (`claude-native` harness).
+  - `claude_code` — Claude Code (`claude-native` harness), provider default model.
+  - `claude_sonnet` — Claude Code pinned to `claude-sonnet-5-5` (strong, mid-cost).
+  - `claude_haiku` — Claude Code pinned to `claude-haiku-5-5` (cheap and fast).
   - `codex` — Codex (`codex-native` harness).
-  - `opencode` — OpenCode (`opencode-native` harness).
+  - `opencode` — OpenCode (`opencode-native` harness), provider default model.
+  - `opencode-kimi` — OpenCode pinned to `opencode-go/kimi-k3` (Moonshot).
+  - `opencode-glm` — OpenCode pinned to `opencode-go/glm-5.3` (Zhipu).
+  - `opencode-qwen` — OpenCode pinned to `opencode-go/qwen3.8-max` (Alibaba, cheap and fast).
   - `agy` — Google Antigravity CLI (`antigravity-native` harness). Gemini-native
     with its own Google account auth; does not run Claude/GPT-family models.
 
@@ -70,9 +76,12 @@ prompt: |
   Roster preflight (FIRST turn, before any dispatch). Before delegating
   anything, run exactly ONE `sys_session_get_info({})` and read its
   `configured_harnesses` map — the bound host's authoritative readiness report.
-  Map workers to readiness keys as follows:
-  `claude_code` -> `claude-native`, `codex` -> `codex-native`, `opencode` ->
-  `opencode-native`, and `agy` -> `antigravity-native`. A worker is AVAILABLE only
+  Map workers to readiness keys as follows: `claude_code`, `claude_sonnet`,
+  and `claude_haiku` -> `claude-native`; `codex` -> `codex-native`;
+  `opencode`, `opencode-kimi`, `opencode-glm`, and `opencode-qwen` ->
+  `opencode-native`; and `agy` -> `antigravity-native`. Several workers share
+  one harness key — when the key reads `true`, every worker on it is
+  AVAILABLE; any other value benches all of them. A worker is AVAILABLE only
   when its readiness value is exactly `true` — every other value (`false`,
   `"binary-missing"`, `"needs-auth"`, `"version-too-low"`) means it cannot boot
   on this host. If `configured_harnesses` is absent or `null` (the session has
@@ -136,14 +145,15 @@ prompt: |
       contract; the reviewer reads the file and reports issues, never edits.
     - `explore` / `search` — read-only investigation that returns a findings report.
 
-  Goal mode is opt-in for long-running IMPLEMENT dispatches to `claude_code`
+  Goal mode is opt-in for long-running IMPLEMENT dispatches to the
+  `claude-native` workers (`claude_code`, `claude_sonnet`, `claude_haiku`)
   and `codex`. When a task has an explicit completion condition and benefits
   from the worker continuing autonomously until it is satisfied, make
   `args.input` one standalone `/goal <condition>` command. `/goal` must be the
   first non-whitespace token; put the full `IMPLEMENT` task, worktree path,
   acceptance contract, required green gates, and PR requirement inside the
-  condition. Do not use child goal mode for `review`, `explore`, or `search`,
-  or for `opencode` or `agy`. Goal mode is expressed in
+  condition.   Do not use child goal mode for `review`, `explore`, or `search`,
+  or for `opencode`, `opencode-kimi`, `opencode-glm`, `opencode-qwen`, or `agy`. Goal mode is expressed in
   the input command — do not invent a `sys_session_send` goal parameter.
 
   Treat real investigation as delegated work. If the human asks you to
@@ -172,17 +182,31 @@ prompt: |
   "launch agents",
   "use claude code", "use codex", "use opencode",
   or "use agy" / "use antigravity", that is a literal instruction to
-  dispatch them. `claude_code`, `codex`, `opencode`, and
+  dispatch them. `claude_code`, `codex`, `opencode`, `opencode-kimi`,
+  `opencode-glm`, `opencode-qwen`, and
   `agy` are the primary implementers — pick per task: `claude_code` for
   multi-file / refactor / test-writing work, `codex` for narrow, well-scoped
-  changes, and `opencode` / `agy` when another
+  changes, `claude_sonnet` for strong mid-cost implementation, `claude_haiku`
+  or `opencode-qwen` for cheap and fast explores and wide fan-outs, and
+  `opencode` / `opencode-kimi` / `opencode-glm` / `agy` when another
   implement/review vendor is wanted. Route `review` / `explore` /
   `search` tasks to a different-vendor implementer when a fresh
-  perspective or a specific model is wanted.
+  perspective or a specific model is wanted — a second-opinion review reads
+  best from `opencode-kimi` or `opencode-glm` (Moonshot / Zhipu vendors no
+  other worker covers).
 
   Cross-vendor verification is the point: review is ALWAYS done by a DIFFERENT
   vendor than the implementer — e.g. `claude_code`'s PR is reviewed by any of
-  `codex` / `opencode` / `agy`, and vice versa. Give the
+  `codex` / `opencode` / `opencode-kimi` / `opencode-glm` / `opencode-qwen` /
+  `agy`, and vice versa. Vendor means the MODEL's vendor family, not the
+  harness: `opencode-kimi` counts as Moonshot (Kimi), `opencode-glm` as Zhipu
+  (GLM), and `opencode-qwen` as Alibaba (Qwen) — each is a valid reviewer for
+  the others and for Claude/OpenAI/Gemini-built diffs. The `claude_code` /
+  `claude_sonnet` / `claude_haiku` trio all count as Claude (Anthropic), so
+  they can never review each other — a Claude-built diff needs a non-Claude
+  reviewer. The unpinned `opencode` worker counts as whatever vendor its
+  resolved default model belongs to (check `sys_list_models`); when in doubt,
+  pick a reviewer from a definitely-different family. Give the
   reviewer ONLY a saved diff snapshot + contract; never point it at the
   implementer's worktree. Reuse a supplied diff file, or save one with a shell
   redirect. Confirm the snapshot is accessible from the reviewer's filesystem;
@@ -221,9 +245,10 @@ prompt: |
   server on localhost:PORT, file watchers, tailing logs) or ad-hoc shell where
   `sys_os_shell`'s one-shot blocking model doesn't fit, launch the `shell`
   terminal via `sys_terminal_launch` (it accepts a `cwd` override so you can run
-  it inside a per-task worktree). NEVER use this terminal to launch coding
+  it inside a per-task worktree).   NEVER use this terminal to launch coding
   agents / sub-agents — all delegation goes through `sys_session_send` to
-  `claude_code` / `codex` / `opencode` / `agy`.
+  `claude_code` / `claude_sonnet` / `claude_haiku` / `codex` / `opencode` /
+  `opencode-kimi` / `opencode-glm` / `opencode-qwen` / `agy`.
 
   For external context and deterministic status, use the `gh` CLI (via
   `sys_os_shell`) for github.com. Reach for such tools sparingly — only to
@@ -336,13 +361,21 @@ terminals:
         type: none
 
 tools:
-  # Coding sub-agents — see agents/<dir>/. claude_code, codex, opencode,
-  # and agy are real CLI coding harnesses. Each implements, reviews
-  # (cross-vendor), and explores.
+  # Coding sub-agents — see agents/<dir>/. claude_code, claude_sonnet,
+  # claude_haiku, codex, opencode, opencode-kimi, opencode-glm,
+  # opencode-qwen, and agy are real CLI coding harnesses. Each implements,
+  # reviews (cross-vendor), and explores. The opencode-* workers pin their
+  # own model (executor.model); claude_code / codex / opencode / agy run
+  # their harness default.
   agents:
     - claude_code
+    - claude_sonnet
+    - claude_haiku
     - codex
     - opencode
+    - opencode-kimi
+    - opencode-glm
+    - opencode-qwen
     - agy
 
 # Mechanism-layer enforcement — runner-side tool gate, no server change.
@@ -365,7 +398,12 @@ guardrails:
       function:
         path: omnigent.inner.nessie.policies.spawn_bounds
         arguments:
-          max_dispatches_per_turn: 6
+          # 9 workers (was 4): a full parallel-safe wave can dispatch one
+          # IMPLEMENT per worker in a single turn, so the cap must fit 9.
+          # 10 leaves one spare for a same-turn auxiliary dispatch (e.g. a
+          # replacement via sys_session_create). Reviews land in later turns
+          # as workers finish, so they don't stack on top of the wave.
+          max_dispatches_per_turn: 10
           # sys_session_create counts too: with spawn: true polly can
           # launch self-defined children, and an uncounted create would
           # bypass the per-turn fan-out cap.

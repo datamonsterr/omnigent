@@ -75,7 +75,7 @@ Read the result with `… | grep '^SUMMARY' | python -m json.tool`. Each run tak
 | `tool_dispatch` | call `sys_os_shell` to write a sentinel | the file appears on disk (bridged `sys_*` dispatch works; `blast_radius` ALLOWs benign shell) |
 | `guardrail_purpose` | `sys_session_send` with **no** `args.purpose` | tool output carries `Denied by policy: … must declare what kind of work it is` (`headless_subagent_purpose_guard`) |
 | `guardrail_blast_radius` | `sys_os_shell("git push --force …")` | tool output carries `Denied by policy: … blast-radius policy` |
-| `fanout_dispatch` | emit 7 `sys_session_send` in one turn | 6 dispatch handles created and the seventh is denied by `spawn_bounds` |
+| `fanout_dispatch` | emit 11 `sys_session_send` in one turn | 10 dispatch handles created and the eleventh is denied by `spawn_bounds` |
 
 ### The verifiable before→after loop
 

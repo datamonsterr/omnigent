@@ -12,14 +12,17 @@ repository-specific technical question.
 ## Procedure
 1. Decompose the question into one or more bounded investigation tasks. Prefer
    two independent lenses for ambiguous or high-stakes questions.
-2. Dispatch each task to `claude_code`, `codex`, `opencode`, or `agy`:
-   `sys_session_send(agent="claude_code"|"codex"|"opencode"|"agy",
+2. Dispatch each task to `claude_code`, `claude_sonnet`, `claude_haiku`, `codex`, `opencode`, `opencode-kimi`, `opencode-glm`, `opencode-qwen`, or `agy`:
+   `sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"|"codex"|"opencode"|"opencode-kimi"|"opencode-glm"|"opencode-qwen"|"agy",
    title="explore-<task_slug>", args={purpose: "explore", input: "<question +
    exact scope + evidence requested>"})`. Use a task-based title such as
    `explore-ci-flake`, never the raw vendor name. Use `purpose: "search"` only
    when the task is primarily external/document search. Prefer a different-vendor
-   implementer when an independent lens is wanted (e.g. `agy` for a Gemini
-   perspective, or `opencode` for a third implementer view). Any worker takes an optional
+    implementer when an independent lens is wanted (e.g. `agy` for a Gemini
+    perspective, or `opencode` for a third implementer view). For cheap, fast,
+    wide fan-outs prefer `claude_haiku` or `opencode-qwen`; for a second-opinion
+    review lens prefer `opencode-kimi` or `opencode-glm` (vendors no other
+    worker covers). Any worker takes an optional
    `args.model` (`sys_list_models` shows what each worker can run; an invalid
    model/worker combination fails loud at dispatch, and `model` only applies on
    the dispatch that CREATES the session — a send that continues an existing

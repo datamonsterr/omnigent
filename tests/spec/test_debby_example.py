@@ -82,6 +82,31 @@ def test_packaged_debby_resource_stays_in_sync_with_source_example() -> None:
     )
 
 
+def test_debby_bench_heads_pin_their_models() -> None:
+    """The five bench heads pin their models exactly as declared.
+
+    claude_sonnet / claude_haiku pin Claude ids on claude-sdk; the
+    opencode-* heads pin provider/model ids (verified against
+    ``opencode models``) on opencode-native. An unpinned bench head would
+    silently inherit the provider default and duplicate another head's
+    vendor — erasing the diversity the bench exists for.
+    """
+    spec = parse(_DEBBY_DIR)
+    by_name = {sub.name: sub for sub in spec.sub_agents}
+
+    expected = {
+        "claude_sonnet": ("claude-sdk", "claude-sonnet-5-5"),
+        "claude_haiku": ("claude-sdk", "claude-haiku-5-5"),
+        "opencode-kimi": ("opencode-native", "opencode-go/kimi-k3"),
+        "opencode-glm": ("opencode-native", "opencode-go/glm-5.3"),
+        "opencode-qwen": ("opencode-native", "opencode-go/qwen3.8-max"),
+    }
+    for name, (harness, model) in expected.items():
+        assert name in by_name, f"Debby should declare a {name!r} head; got {sorted(by_name)}."
+        assert by_name[name].executor.harness_kind == harness, name
+        assert by_name[name].executor.model == model, name
+
+
 def test_debby_claude_head_unchanged() -> None:
     """The Claude head still runs on ``claude-sdk`` (the fix is GPT-only)."""
     spec = parse(_DEBBY_DIR)

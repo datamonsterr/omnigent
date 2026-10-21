@@ -618,10 +618,10 @@ def scenario_guardrail_blast_radius(ctx: Ctx) -> Result:
 
 
 def scenario_fanout_dispatch(ctx: Ctx) -> Result:
-    """Seven-wide fan-out: six dispatches pass and the seventh is denied.
+    """Eleven-wide fan-out: ten dispatches pass and the eleventh is denied.
 
     Hard checks: fan-out creates dispatch handles and ``spawn_bounds`` enforces
-    Polly's six-dispatch cap through the deployed server-side path.
+    Polly's ten-dispatch cap through the deployed server-side path.
     """
     res = Result("fanout_dispatch")
     s = ctx.servers
@@ -634,7 +634,7 @@ def scenario_fanout_dispatch(ctx: Ctx) -> Result:
             {"input": "noop", "purpose": "explore"},
             call_id=f"call_{i}",
         )
-        for i in range(1, 8)
+        for i in range(1, 12)
     ]
     _mock_configure(
         s.mock_url,
@@ -652,9 +652,9 @@ def scenario_fanout_dispatch(ctx: Ctx) -> Result:
     outs = _tool_outputs(_session_items(s.server_url, sid))
     combined = "\n".join(outs)
     handles = sum(1 for o in outs if '"kind": "sub_agent"' in o or '"status": "launching"' in o)
-    res.add("fanout_dispatched", handles == 6, f"{handles} handles / {len(outs)} outputs")
+    res.add("fanout_dispatched", handles == 10, f"{handles} handles / {len(outs)} outputs")
     cap_fired = "worker dispatches this turn" in combined
-    res.add("spawn_bounds_capped", cap_fired, "seventh dispatch denied")
+    res.add("spawn_bounds_capped", cap_fired, "eleventh dispatch denied")
     res.notes.append(
         f"finding: spawn_bounds per-turn cap fired={cap_fired} "
         "(expected True in the deployed server-side path)"
