@@ -21,8 +21,11 @@ repository-specific technical question.
     implementer when an independent lens is wanted (e.g. `agy` for a Gemini
     perspective, or `opencode` for a third implementer view). For cheap, fast,
     wide fan-outs prefer `claude_haiku` or `opencode-qwen`; for a second-opinion
-    review lens prefer `opencode-kimi` or `opencode-glm` (vendors no other
-    worker covers). Any worker takes an optional
+    review lens consider `opencode-kimi` or `opencode-glm`. Compare the actual
+    resolved model families after routing and overrides before claiming an
+    independent lens; names and harnesses alone do not establish it, and an
+    unknown or unverified fallback family cannot establish independence.
+    Any worker takes an optional
    `args.model` (`sys_list_models` shows what each worker can run; an invalid
    model/worker combination fails loud at dispatch, and `model` only applies on
    the dispatch that CREATES the session — a send that continues an existing

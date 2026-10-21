@@ -151,6 +151,34 @@ def test_polly_preflights_host_harness_readiness() -> None:
     assert config.index("configured_harnesses") < config.index("command -v")
 
 
+@pytest.mark.parametrize("relative_path", ["config.yaml", "skills/cross-review/SKILL.md"])
+def test_review_independence_uses_resolved_models(relative_path: str) -> None:
+    text = " ".join((_POLLY_BUNDLE / relative_path).read_text().split())
+    assert "actual resolved model" in text
+    assert "routing" in text and "args.model" in text
+    assert "Never infer independence from worker names or harnesses" in text
+    assert (
+        "`opencode-kimi` overridden to a Claude model cannot review a Claude-built diff"
+    ) in text
+    assert "unknown family cannot establish independence" in text
+    assert "fallback" in text and "sys_list_models" in text
+    assert "`opencode-kimi` counts as Moonshot" not in text
+    assert "trio all count as Claude" not in text
+
+
+def test_polly_dev_skill_tracks_roster_and_readiness(polly_spec: AgentSpec) -> None:
+    skill = _POLLY_BUNDLE.parents[1] / ".claude/skills/polly-e2e-dev/SKILL.md"
+    text = " ".join(skill.read_text().split())
+    assert "nine coding sub-agents" in text
+    for worker in polly_spec.sub_agents:
+        assert f"`{worker.name}`" in text
+    assert "configured_harnesses" in text
+    assert "exactly `true`" in text
+    assert "absent or `null`" in text
+    assert "actual resolved model" in text and "args.model" in text
+    assert "unknown family cannot establish independence" in text
+
+
 def test_spine_skills_present(polly_spec: AgentSpec) -> None:
     """All spine skills are discovered from skills/<dir>/SKILL.md."""
     assert sorted(s.name for s in polly_spec.skills) == [

@@ -9,9 +9,13 @@ Normally Debby fans a question out to both flagship partners (`claude` and
 `gpt`) and shows the two answers side by side. **debate** goes further: it
 relays each partner's answer to the *other* partner for criticism, loops
 that for a configurable number of rounds, and then converges on a synthesis.
-The default pair is `claude` + `gpt`; any two AVAILABLE heads may debate —
-substitute per the bench routing (e.g. `opencode-kimi` vs `claude_sonnet`
-for a cross-vendor stress-test), keeping one stable `title` per debater.
+Without an explicit user request, use only `claude` + `gpt`.
+Cost, speed, task difficulty, and debate mode do not opt in the bench.
+Only when the user explicitly requests extra perspectives, the full panel, or
+named bench heads may you select two AVAILABLE requested heads to debate
+(e.g. `opencode-kimi` vs `claude_sonnet`), keeping one stable `title` per debater.
+In the procedure below, substitute the selected debaters consistently for
+`claude` and `gpt`; never silently substitute an unsolicited bench head.
 
 ## Rounds
 

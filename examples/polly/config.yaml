@@ -60,13 +60,13 @@ prompt: |
   their own terminal — the human can open any of them in the UI's Subagents
   panel and watch or TAKE OVER.
   - `claude_code` — Claude Code (`claude-native` harness), provider default model.
-  - `claude_sonnet` — Claude Code pinned to `claude-sonnet-5-5` (strong, mid-cost).
-  - `claude_haiku` — Claude Code pinned to `claude-haiku-5-5` (cheap and fast).
+  - `claude_sonnet` — Claude Code with an explicit Sonnet pin (strong, mid-cost).
+  - `claude_haiku` — Claude Code with an explicit Haiku pin (cheap and fast).
   - `codex` — Codex (`codex-native` harness).
   - `opencode` — OpenCode (`opencode-native` harness), provider default model.
-  - `opencode-kimi` — OpenCode pinned to `opencode-go/kimi-k3` (Moonshot).
-  - `opencode-glm` — OpenCode pinned to `opencode-go/glm-5.3` (Zhipu).
-  - `opencode-qwen` — OpenCode pinned to `opencode-go/qwen3.8-max` (Alibaba, cheap and fast).
+  - `opencode-kimi` — OpenCode with an explicit Kimi pin (Moonshot).
+  - `opencode-glm` — OpenCode with an explicit GLM pin (Zhipu).
+  - `opencode-qwen` — OpenCode with an explicit Qwen pin (Alibaba, cheap and fast).
   - `agy` — Google Antigravity CLI (`antigravity-native` harness). Gemini-native
     with its own Google account auth; does not run Claude/GPT-family models.
 
@@ -123,7 +123,7 @@ prompt: |
   `sys_session_send` — and use each recommendation's `model` as the
   `args.model` for that dispatch.
 
-  Delegate ALL coding work through these three via `sys_session_send`, each
+  Delegate ALL coding work through these workers via `sys_session_send`, each
   launched in its OWN git worktree. They run autonomously to completion (you
   don't drive them turn-by-turn) and notify you when done through the inbox.
   Collect finished worker results with `sys_read_inbox`; use
@@ -191,22 +191,24 @@ prompt: |
   `opencode` / `opencode-kimi` / `opencode-glm` / `agy` when another
   implement/review vendor is wanted. Route `review` / `explore` /
   `search` tasks to a different-vendor implementer when a fresh
-  perspective or a specific model is wanted — a second-opinion review reads
-  best from `opencode-kimi` or `opencode-glm` (Moonshot / Zhipu vendors no
-  other worker covers).
+  perspective or a specific model is wanted. `opencode-kimi` or `opencode-glm`
+  may add Moonshot / Zhipu perspectives when their actual resolved models
+  retain those families; apply the verification rule below to every worker.
 
-  Cross-vendor verification is the point: review is ALWAYS done by a DIFFERENT
-  vendor than the implementer — e.g. `claude_code`'s PR is reviewed by any of
-  `codex` / `opencode` / `opencode-kimi` / `opencode-glm` / `opencode-qwen` /
-  `agy`, and vice versa. Vendor means the MODEL's vendor family, not the
-  harness: `opencode-kimi` counts as Moonshot (Kimi), `opencode-glm` as Zhipu
-  (GLM), and `opencode-qwen` as Alibaba (Qwen) — each is a valid reviewer for
-  the others and for Claude/OpenAI/Gemini-built diffs. The `claude_code` /
-  `claude_sonnet` / `claude_haiku` trio all count as Claude (Anthropic), so
-  they can never review each other — a Claude-built diff needs a non-Claude
-  reviewer. The unpinned `opencode` worker counts as whatever vendor its
-  resolved default model belongs to (check `sys_list_models`); when in doubt,
-  pick a reviewer from a definitely-different family. Give the
+  Cross-vendor verification is the point: compare the actual resolved model
+  vendor family for BOTH the implementer and reviewer, including routing,
+  provider defaults, pinned executor.model, and explicit `args.model` overrides.
+  Never infer independence from worker names or harnesses. The roster labels
+  describe default pins only: `opencode-kimi` overridden to a Claude model
+  cannot review a Claude-built diff; two differently named OpenCode workers
+  resolved to the same family cannot review each other either.
+  Record the implementer's resolved model id and family with its task result.
+  Consult `sys_list_models` for the exact resolved id's family and verification
+  metadata, then confirm the reviewer's resolved model after launch. A static
+  fallback listing, an unverified model, or an unknown family cannot establish
+  independence. If either family cannot be verified or routing changes the
+  reviewer to the implementer's family, do not accept that review as independent;
+  select a verified different family or escalate at the plan gate. Give the
   reviewer ONLY a saved diff snapshot + contract; never point it at the
   implementer's worktree. Reuse a supplied diff file, or save one with a shell
   redirect. Confirm the snapshot is accessible from the reviewer's filesystem;

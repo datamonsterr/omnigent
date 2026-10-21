@@ -1,7 +1,8 @@
 """Flag hardcoded LLM model ids outside tests and owned fallbacks.
 
-Unavoidable static aliases are accepted only inside complete
-``StaticModelFallback`` records in the central fallback module.
+Unavoidable static aliases require complete central ``StaticModelFallback``
+records. Model-specific example workers may pin only ``executor.model`` in
+the explicitly declared example files below.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 MODEL_ID_RE = re.compile(
     r"""
@@ -53,6 +56,19 @@ SKIP_PARTS = {
 }
 OWNED_FALLBACK_PATH = Path("omnigent/models/model_fallbacks.py")
 FALLBACK_METADATA_FIELDS = frozenset({"owner", "provenance", "discovery_gap"})
+# These model-specific responders/workers demonstrate explicit user config,
+# not runtime defaults. Keep exemptions at the executor.model scalar only.
+EXAMPLE_PIN_PATHS = frozenset(
+    Path(f"examples/{bundle}/agents/{worker}/config.yaml")
+    for bundle in ("polly", "debby")
+    for worker in (
+        "claude_sonnet",
+        "claude_haiku",
+        "opencode-kimi",
+        "opencode-glm",
+        "opencode-qwen",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -193,18 +209,52 @@ def _scan_python(path: Path) -> list[Hit]:
     return hits
 
 
+def _example_pin_span(path: Path, text: str) -> tuple[int, int] | None:
+    """Locate only a declared example's direct executor.model scalar."""
+    if Path(_repo_relative(path)) not in EXAMPLE_PIN_PATHS:
+        return None
+    try:
+        node = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        return None
+    for field in ("executor", "model"):
+        if not isinstance(node, yaml.MappingNode):
+            return None
+        matches = [
+            (key, value)
+            for key, value in node.value
+            if isinstance(key, yaml.ScalarNode) and key.value == field
+        ]
+        if len(matches) != 1:
+            return None
+        key, node = matches[0]
+        # Aliases point to the original node's marks, outside this field.
+        if node.start_mark.index < key.end_mark.index:
+            return None
+    if not isinstance(node, yaml.ScalarNode) or node.tag != "tag:yaml.org,2002:str":
+        return None
+    return node.start_mark.index, node.end_mark.index
+
+
 def _scan_text(path: Path) -> list[Hit]:
     """Scan non-comment config and shell lines for model-looking ids."""
     try:
-        lines = path.read_text().splitlines()
+        text = path.read_text()
     except UnicodeDecodeError:
         return []
 
+    pin_span = _example_pin_span(path, text)
     hits: list[Hit] = []
-    for line_number, line in enumerate(lines, start=1):
-        if line.lstrip().startswith("#"):
-            continue
-        hits.extend(Hit(path, line_number, model) for model in _extract_models(line))
+    offset = 0
+    for line_number, line in enumerate(text.splitlines(keepends=True), start=1):
+        if not line.lstrip().startswith("#"):
+            for match in MODEL_ID_RE.finditer(line):
+                if pin_span is not None and (
+                    pin_span[0] <= offset + match.start() < offset + match.end() <= pin_span[1]
+                ):
+                    continue
+                hits.append(Hit(path, line_number, match.group(0)))
+        offset += len(line)
     return hits
 
 
@@ -251,7 +301,9 @@ def main() -> int:
         )
     sys.stdout.write(
         "\nAvoid adding hardcoded model names outside tests. Unavoidable static aliases "
-        "belong in complete StaticModelFallback records in omnigent/model_fallbacks.py.\n"
+        "belong in complete StaticModelFallback records in omnigent/models/model_fallbacks.py. "
+        "Only declared model-specific example files may pin executor.model; "
+        "see docs/model-hardcoding-plan.md.\n"
     )
     return 1
 

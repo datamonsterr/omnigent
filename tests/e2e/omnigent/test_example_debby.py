@@ -98,6 +98,15 @@ def test_debby_debate_skill_present(debby_spec: AgentSpec) -> None:
     assert sorted(s.name for s in debby_spec.skills) == ["debate"]
 
 
+@pytest.mark.parametrize("relative_path", ["config.yaml", "skills/debate/SKILL.md"])
+def test_debby_bench_requires_explicit_user_request(relative_path: str) -> None:
+    text = " ".join((_DEBBY_BUNDLE / relative_path).read_text().split())
+    assert "Without an explicit user request, use only `claude` + `gpt`" in text
+    assert "Cost, speed, task difficulty, and debate mode do not opt in the bench" in text
+    assert "or pick per task" not in text
+    assert "any two AVAILABLE heads may debate" not in text
+
+
 def test_debby_has_os_env(debby_spec: AgentSpec) -> None:
     """
     Debby carries an ``os_env`` block so the bridged ``sys_os_*`` tools register

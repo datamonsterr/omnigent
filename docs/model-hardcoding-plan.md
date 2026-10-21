@@ -20,6 +20,14 @@ provenance, and the discovery gap that prevents a live listing.
   discovery-gap metadata.
 - There is no count-based escape hatch. New production aliases must either come
   from configuration/discovery or satisfy the central owned-fallback contract.
+- Model-specific Polly and Debby example workers intentionally demonstrate
+  explicit model choices. `EXAMPLE_PIN_PATHS` declares exactly ten agent config
+  files: `claude_sonnet`, `claude_haiku`, `opencode-kimi`, `opencode-glm`, and
+  `opencode-qwen` under each bundle's `agents/` directory. Only their direct
+  `executor.model` YAML scalar is exempt. Provider-default workers, parent
+  prompts, other fields, and other example files remain scanned. Duplicate
+  executor/model keys, aliases, and malformed YAML do not qualify. Pin updates
+  remain explicit example configuration, never a production fallback.
 
 ### Scope and exclusions
 
@@ -35,8 +43,8 @@ improve API documentation.
 
 This remains a model-id regex ratchet rather than a parser-level guarantee for
 every provider naming scheme. Extend the regex and add a focused test when a
-new complete-id shape appears; do not broaden structural exceptions beyond
-complete owned fallback records.
+new complete-id shape appears; keep structural exceptions confined to complete
+owned fallback records and the declared example executor pins above.
 
 The hook intentionally scans the full tracked surface when a supported file
 changes. That bounded cost is what lets it enforce global absence instead of
