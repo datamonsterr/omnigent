@@ -25,6 +25,8 @@ implements them separately, so a fix for one harness does not reach the others.
   the answer reaches the harness.
 - `resume`: resume a previous conversation from the CLI (`--resume`, or a bare
   `--resume` picker that lists only this host's sessions) or by reopening it.
+- `pi-rebuilt-tool-names`: Pi forks and cold resumes keep matching tool names
+  when rebuilding tool results, as required by Gemini.
 - `steer`: sending while the harness is mid-turn steers the active turn.
 - `chat-render`: the harness's output renders in chat like other harnesses.
   A single-file tool row (Read, Write, Edit) shows its path as a dotted link;
@@ -435,6 +437,20 @@ Cross-harness journeys:
   receipt races, abandoned-hook cleanup, and legacy verdict replay are covered by
   `tests/server/integration/test_kiro_permission_delivery.py`.
   These tests do not verify a signed-in vendor Kiro CLI.
+- **`resume`, Pi full runner restart (own environment):**
+  `tests/e2e/test_native_resume_provider_e2e.py::test_connected_native_resume_routes_to_configured_provider`
+  checks changed, unchanged and pinned providers with the real Pi CLI, server,
+  runner and native terminal. After runner cleanup deletes local bridge files,
+  stored own-session usage restores the baseline; Chat and TUI turns advance
+  input tokens 1,000 → 1,100 → 1,200 and retain history/model. Provider replies
+  and usage are scripted. This is not live billing or browser-rendering proof.
+- **`resume`, Pi process relaunch with a surviving runner (own environment):**
+  `tests/e2e/test_native_resume_provider_e2e.py::test_connected_native_resume_routes_to_configured_provider`
+  includes a Pi-only process-relaunch case. Keep the runner and bridge directory,
+  relaunch the session-owned Pi pane, then send through Chat and the native
+  terminal. Check retained history and cumulative input usage 1,000 → 1,100 →
+  1,200. The provider replies and usage are scripted; this does not prove live
+  billing or recovery after the runner deletes the bridge directory.
 - **`resume`, bare picker scoped to this host:**
   `tests/e2e/test_native_resume_picker_cross_host_e2e.py::test_bare_resume_picker_excludes_other_hosts_sessions`
 - **`resume`, Claude and Pi provider selection after a runner restart:**
@@ -623,6 +639,17 @@ Cross-harness journeys:
   remain visible. For an older host (501) or server (404), verify that the
   derived skill/MCP plugin listing still works; a 502 shows an inventory error.
   Codex and Cursor keep their existing derived listings.
+
+**Pi rebuilt history:** converter pairing/name cases in
+`tests/harnesses/pi_native/test_pi_native_resume.py` cover matching, reordered
+and orphan results. The existing
+`tests/e2e/test_pi_native_resume_duplicate_tool_result_e2e.py::test_cold_resume_does_not_replay_duplicate_tool_result`
+checks real server/runner serialization with a stub Pi process. For a real
+Google-provider check, fork a session containing tool calls onto native Pi
+with Gemini, then send a follow-up; repeat a cold resume after removing its
+local session file. Expect preserved results and a reply without the empty
+`function_response.name` error. Orphan results and thought signatures remain
+separate compatibility gaps; these automated checks do not prove live Gemini.
 
 ## Gotchas
 

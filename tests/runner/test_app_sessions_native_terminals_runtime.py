@@ -429,7 +429,11 @@ async def test_auto_create_codex_terminal_keeps_loop_responsive_during_credentia
     launch_resolutions = 0
 
     def resolve_launch(
-        *, model: str | None, spec: Any = None, terminal_launch_args: Any = ()
+        *,
+        model: str | None,
+        spec: Any = None,
+        terminal_launch_args: Any = (),
+        source_codex_home: Path | None = None,
     ) -> codex_app_mod.NativeCodexLaunch:
         nonlocal launch_resolutions
         launch_resolutions += 1
@@ -4731,12 +4735,19 @@ async def test_auto_create_codex_terminal_default_pin_requires_a_fresh_catalog(
 
     # A bare subscription default shape, with the real store-backed catalog
     # serving the seeded rows; the re-probe is stubbed off the real CLI.
+    def resolve_launch(
+        *,
+        model: str | None,
+        spec: Any = None,
+        terminal_launch_args: Any = (),
+        source_codex_home: Path | None = None,
+    ) -> codex_app_mod.NativeCodexLaunch:
+        return codex_app_mod.NativeCodexLaunch(config_overrides=[], model=model, profile=None)
+
     monkeypatch.setattr(
         codex_app_mod,
         "resolve_native_codex_launch",
-        lambda *, model, spec=None, terminal_launch_args=(): codex_app_mod.NativeCodexLaunch(
-            config_overrides=[], model=model, profile=None
-        ),
+        resolve_launch,
     )
     monkeypatch.setattr(codex_app_mod, "codex_launch_catalog", REAL_CODEX_LAUNCH_CATALOG)
     refreshed = [{"id": "gpt-5.6-terra", "model": "gpt-5.6-terra", "isDefault": True}]
@@ -4981,12 +4992,19 @@ async def test_auto_create_codex_terminal_accepts_gateway_spelled_override(
     monkeypatch.delenv("DATABRICKS_CONFIG_PROFILE", raising=False)
     monkeypatch.setattr("omnigent.runner._entry._make_auth_token_factory", lambda: None)
 
+    def resolve_launch(
+        *,
+        model: str | None,
+        spec: Any = None,
+        terminal_launch_args: Any = (),
+        source_codex_home: Path | None = None,
+    ) -> codex_app_mod.NativeCodexLaunch:
+        return codex_app_mod.NativeCodexLaunch(config_overrides=[], model=model, profile=None)
+
     monkeypatch.setattr(
         codex_app_mod,
         "resolve_native_codex_launch",
-        lambda *, model, spec=None, terminal_launch_args=(): codex_app_mod.NativeCodexLaunch(
-            config_overrides=[], model=model, profile=None
-        ),
+        resolve_launch,
     )
     monkeypatch.setattr(codex_app_mod, "codex_launch_catalog", REAL_CODEX_LAUNCH_CATALOG)
 
