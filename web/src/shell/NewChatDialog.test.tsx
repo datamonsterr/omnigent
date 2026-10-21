@@ -10289,6 +10289,39 @@ describe("NewChatLandingScreen Auto harness", () => {
     expect(body.cost_control_mode_override).toBe("on");
   });
 
+  it("does not send a project account default while the brain harness is unresolved Auto", async () => {
+    authenticatedFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_auto_project" }),
+    } as unknown as Response);
+    mockAgents([testAgent("ag_polly", "polly", { display_name: "Polly", harness: "codex" })]);
+    useProjectsMock.mockReturnValue({
+      ...SUCCESS_QUERY_STATE,
+      data: [{ id: "proj_alpha", name: "Alpha" }],
+    });
+    useProjectConfigMock.mockReturnValue({
+      ...SUCCESS_QUERY_STATE,
+      data: {
+        host_id: "host_1",
+        workspace: "/Users/corey/repo",
+        agent_id: "ag_polly",
+        account_id: "codex-1",
+      },
+    });
+    localStorage.setItem(LAST_AGENT_KEY, "ag_polly");
+    localStorage.setItem(LAST_HARNESS_KEY, JSON.stringify({ ag_polly: "auto" }));
+
+    renderLanding({ smart_routing_enabled: true }, "/?project=Alpha");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-workspace-chip")).toHaveTextContent("repo"),
+    );
+    expect(screen.queryByTestId("new-chat-landing-agent-account")).toBeNull();
+
+    const { body } = await submitAndReadBody();
+    expect(body.harness_override).toBe("auto");
+    expect(body.labels).not.toHaveProperty("omnigent.account.id");
+  });
+
   it("sends no permission override for Auto, even after a stale mode was stored", async () => {
     // Permissions are inherited from the machine's own Claude Code / Codex
     // config, which is expressed by sending nothing: the permission mode rides

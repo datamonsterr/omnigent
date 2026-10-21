@@ -3129,7 +3129,10 @@ export function NewChatLandingScreen() {
   // The harness whose account pool the account picker reads. An SDK agent runs
   // on its native family's accounts (a custom `codex` agent uses `codex-native`).
   const accountHarness =
-    selectedNativeHarness ?? accountPoolHarness(pickedHarness ?? selectedAgent?.harness ?? null);
+    pickedHarness === AUTO_HARNESS_ID
+      ? null
+      : (selectedNativeHarness ??
+        accountPoolHarness(pickedHarness ?? selectedAgent?.harness ?? null));
   // A harness switch reseeds the account pick from the last account used for
   // that harness, so the picker opens on the account that harness last ran on.
   useEffect(() => {
@@ -3149,11 +3152,17 @@ export function NewChatLandingScreen() {
   // that project runs under the account the project pins.
   useEffect(() => {
     const configured = prefillConfig?.accountId;
-    if (!configured) return;
+    if (!configured || pickedHarness === AUTO_HARNESS_ID) return;
     if (pickedAccountHarness !== null && pickedAccountId !== null) return;
     setPickedAccountId(configured);
     setPickedAccountHarness(accountHarness);
-  }, [prefillConfig?.accountId, pickedAccountHarness, pickedAccountId, accountHarness]);
+  }, [
+    prefillConfig?.accountId,
+    pickedAccountHarness,
+    pickedAccountId,
+    accountHarness,
+    pickedHarness,
+  ]);
   const accountSection = useAccountConfigSection({
     harness: accountHarness,
     selectedAccountId: pickedAccountId,
@@ -5749,6 +5758,7 @@ export function NewChatLandingScreen() {
       const createProjectId = selectedProject !== "" ? configProjectId : null;
       const localProject =
         selectedProject !== "" ? { id: createProjectId, name: selectedProject } : undefined;
+      const accountIdForCreate = pickedHarness === AUTO_HARNESS_ID ? null : pickedAccountId;
       // Server-side default-fill: a slot still holding its untouched project-
       // config seed (per the source refs) is OMITTED so the server fills it
       // from the config. Any user interaction — even re-picking the exact
@@ -5781,12 +5791,12 @@ export function NewChatLandingScreen() {
               ...composerContextLabels,
               // The account the user pinned; the server falls back to its own
               // ranking when this label is absent.
-              ...(pickedAccountId ? { [ACCOUNT_ID_LABEL]: pickedAccountId } : {}),
+              ...(accountIdForCreate ? { [ACCOUNT_ID_LABEL]: accountIdForCreate } : {}),
             }
           : {
               ...(baseLabels ?? {}),
               ...composerContextLabels,
-              ...(pickedAccountId ? { [ACCOUNT_ID_LABEL]: pickedAccountId } : {}),
+              ...(accountIdForCreate ? { [ACCOUNT_ID_LABEL]: accountIdForCreate } : {}),
             };
 
       const skill = isNativeTerminalAgent

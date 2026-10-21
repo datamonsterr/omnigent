@@ -36,6 +36,10 @@ _logger = logging.getLogger(__name__)
 
 #: The agent spec ``executor.config`` key that names the agent's default account.
 AGENT_ACCOUNT_CONFIG_KEY = "account_id"
+ACCOUNT_PIN_AUTO_HARNESS_ERROR = (
+    "Account pins are not supported with unresolved 'auto' harness routing; "
+    "select a concrete harness."
+)
 
 
 class AccountPoolExhaustedError(Exception):
@@ -466,6 +470,14 @@ def prepare_session_account(
     pinned_id = initial_labels.get(pin_key) if pin_key is not None else None
     if pin_key is not None and (not isinstance(pinned_id, str) or not pinned_id.strip()):
         raise ValueError("Pinned account id must be a non-empty string")
+
+    if normalize_account_pool_harness(harness) == "auto":
+        if pin_key is not None and not allow_stale_default:
+            raise ValueError(ACCOUNT_PIN_AUTO_HARNESS_ERROR)
+        if pin_key is not None:
+            initial_labels.pop(ACCOUNT_ID_LABEL_KEY, None)
+            initial_labels.pop(LEGACY_ACCOUNT_ID_LABEL_KEY, None)
+        return None
 
     pinned_account = manager.store.get_account(pinned_id) if pinned_id else None
     pinned_pool = manager.store.get_pool(pinned_account.pool_id) if pinned_account else None

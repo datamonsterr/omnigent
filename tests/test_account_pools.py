@@ -482,6 +482,17 @@ def test_explicit_invalid_account_rejects(pin: str) -> None:
         prepare_session_account(labels, "codex-native", None, _manager(store))
 
 
+def test_explicit_account_with_unresolved_auto_harness_is_rejected_clearly() -> None:
+    """Do not compare a concrete pool family to unresolved Auto routing."""
+    store = FakeStore([_pool("codex", [_account("codex-1", "/data/codex-1")])])
+    labels = {ACCOUNT_ID_LABEL_KEY: "codex-1"}
+
+    with pytest.raises(ValueError, match="Account pins are not supported with unresolved 'auto'"):
+        prepare_session_account(labels, "auto", None, _manager(store))
+
+    assert labels == {ACCOUNT_ID_LABEL_KEY: "codex-1"}
+
+
 @pytest.mark.parametrize("pin", ["", "   "])
 def test_malformed_explicit_account_rejects_without_pool_fallback(pin: str) -> None:
     """An empty explicit pin cannot silently select another pool account."""

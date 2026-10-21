@@ -460,6 +460,48 @@ async def test_explicit_invalid_session_account_rejects(
 
 
 @pytest.mark.asyncio
+async def test_explicit_account_with_auto_harness_reports_unsupported_combination(
+    client: AsyncClient,
+    account_pool_store: SqlAlchemyAccountPoolStore,
+) -> None:
+    """An explicit account cannot be family-checked before Auto resolves a harness."""
+    _install_manager(client, account_pool_store)
+    agent = await create_test_agent(client)
+
+    response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent["id"],
+            "harness_override": "auto",
+            "labels": {ACCOUNT_ID_LABEL_KEY: "codex-1"},
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "Account pins are not supported with unresolved 'auto' harness routing" in response.text
+
+
+@pytest.mark.asyncio
+async def test_unresolved_auto_does_not_seed_agent_default_account(
+    client: AsyncClient,
+    account_pool_store: SqlAlchemyAccountPoolStore,
+) -> None:
+    """A saved agent account is not assigned before Auto chooses its harness."""
+    _install_manager(client, account_pool_store)
+    agent = await create_test_agent(client, executor=_codex_agent_executor("codex-1"))
+
+    response = await client.post(
+        "/v1/sessions",
+        json={"agent_id": agent["id"], "harness_override": "auto"},
+    )
+
+    assert response.status_code == 201, response.text
+    labels = response.json()["labels"]
+    assert ACCOUNT_ID_LABEL_KEY not in labels
+    assert CODEX_HOME_LABEL_KEY not in labels
+
+
+@pytest.mark.asyncio
 async def test_session_account_overrides_agent_default_home(
     client: AsyncClient,
     account_pool_store: SqlAlchemyAccountPoolStore,

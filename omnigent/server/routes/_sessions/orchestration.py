@@ -11176,11 +11176,20 @@ async def _assign_session_account(
     :raises OmnigentError: When the pool has no eligible account or a pin
         conflicts with its credential home.
     """
+    from omnigent.account_pools.labels import ACCOUNT_ID_LABEL_KEY, LEGACY_ACCOUNT_ID_LABEL_KEY
     from omnigent.account_pools.manager import (
+        ACCOUNT_PIN_AUTO_HARNESS_ERROR,
         AccountPoolExhaustedError,
         prepare_session_account,
         seed_agent_account_label,
     )
+
+    if harness == "auto":
+        if any(
+            key in initial_labels for key in (ACCOUNT_ID_LABEL_KEY, LEGACY_ACCOUNT_ID_LABEL_KEY)
+        ):
+            raise OmnigentError(ACCOUNT_PIN_AUTO_HARNESS_ERROR, code=ErrorCode.INVALID_INPUT)
+        return None, None
 
     app_state = getattr(getattr(request, "app", None), "state", None)
     manager = getattr(app_state, "account_pool_manager", None)
