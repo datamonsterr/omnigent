@@ -97,9 +97,9 @@ def test_debby_bench_heads_pin_their_models() -> None:
     expected = {
         "claude_sonnet": ("claude-sdk", "claude-sonnet-5-5"),
         "claude_haiku": ("claude-sdk", "claude-haiku-5-5"),
-        "opencode-kimi": ("opencode-native", "opencode-go/kimi-k3"),
-        "opencode-glm": ("opencode-native", "opencode-go/glm-5.3"),
-        "opencode-qwen": ("opencode-native", "opencode-go/qwen3.8-max"),
+        "opencode-minimax": ("opencode-native", "opencode/minimax-m3.1-flash-free"),
+        "opencode-glm": ("opencode-native", "opencode/glm-5.3-flash-free"),
+        "opencode-deepseek": ("opencode-native", "opencode/deepseek-v4.1-flash-free"),
     }
     for name, (harness, model) in expected.items():
         assert name in by_name, f"Debby should declare a {name!r} head; got {sorted(by_name)}."

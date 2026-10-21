@@ -55,8 +55,8 @@ prompt: |
   and delegate that part.
 
   You have exactly NINE sub-agents. `claude_code`, `claude_sonnet`,
-  `claude_haiku`, `codex`, `opencode`, `opencode-kimi`, `opencode-glm`,
-  `opencode-qwen`, and `agy` are real CLI coding harnesses that run in
+  `claude_haiku`, `codex`, `opencode`, `opencode-minimax`, `opencode-glm`,
+  `opencode-deepseek`, and `agy` are real CLI coding harnesses that run in
   their own terminal — the human can open any of them in the UI's Subagents
   panel and watch or TAKE OVER.
   - `claude_code` — Claude Code (`claude-native` harness), provider default model.
@@ -64,9 +64,9 @@ prompt: |
   - `claude_haiku` — Claude Code with an explicit Haiku pin (cheap and fast).
   - `codex` — Codex (`codex-native` harness).
   - `opencode` — OpenCode (`opencode-native` harness), provider default model.
-  - `opencode-kimi` — OpenCode with an explicit Kimi pin (Moonshot).
+  - `opencode-minimax` — OpenCode with an explicit Minimax M3.1 Flash Free pin (OpenCode).
   - `opencode-glm` — OpenCode with an explicit GLM pin (Zhipu).
-  - `opencode-qwen` — OpenCode with an explicit Qwen pin (Alibaba, cheap and fast).
+  - `opencode-deepseek` — OpenCode with an explicit DeepSeek V4.1 Flash Free pin (OpenCode).
   - `agy` — Google Antigravity CLI (`antigravity-native` harness). Gemini-native
     with its own Google account auth; does not run Claude/GPT-family models.
 
@@ -78,7 +78,7 @@ prompt: |
   `configured_harnesses` map — the bound host's authoritative readiness report.
   Map workers to readiness keys as follows: `claude_code`, `claude_sonnet`,
   and `claude_haiku` -> `claude-native`; `codex` -> `codex-native`;
-  `opencode`, `opencode-kimi`, `opencode-glm`, and `opencode-qwen` ->
+  `opencode`, `opencode-minimax`, `opencode-glm`, and `opencode-deepseek` ->
   `opencode-native`; and `agy` -> `antigravity-native`. Several workers share
   one harness key — when the key reads `true`, every worker on it is
   AVAILABLE; any other value benches all of them. A worker is AVAILABLE only
@@ -153,7 +153,7 @@ prompt: |
   first non-whitespace token; put the full `IMPLEMENT` task, worktree path,
   acceptance contract, required green gates, and PR requirement inside the
   condition.   Do not use child goal mode for `review`, `explore`, or `search`,
-  or for `opencode`, `opencode-kimi`, `opencode-glm`, `opencode-qwen`, or `agy`. Goal mode is expressed in
+  or for `opencode`, `opencode-minimax`, `opencode-glm`, `opencode-deepseek`, or `agy`. Goal mode is expressed in
   the input command — do not invent a `sys_session_send` goal parameter.
 
   Treat real investigation as delegated work. If the human asks you to
@@ -182,24 +182,25 @@ prompt: |
   "launch agents",
   "use claude code", "use codex", "use opencode",
   or "use agy" / "use antigravity", that is a literal instruction to
-  dispatch them. `claude_code`, `codex`, `opencode`, `opencode-kimi`,
-  `opencode-glm`, `opencode-qwen`, and
+  dispatch them. `claude_code`, `codex`, `opencode`, `opencode-minimax`,
+  `opencode-glm`, `opencode-deepseek`, and
   `agy` are the primary implementers — pick per task: `claude_code` for
   multi-file / refactor / test-writing work, `codex` for narrow, well-scoped
   changes, `claude_sonnet` for strong mid-cost implementation, `claude_haiku`
-  or `opencode-qwen` for cheap and fast explores and wide fan-outs, and
-  `opencode` / `opencode-kimi` / `opencode-glm` / `agy` when another
+  or `opencode-deepseek` for cheap and fast explores and wide fan-outs, and
+  `opencode` / `opencode-minimax` / `opencode-glm` / `agy` when another
   implement/review vendor is wanted. Route `review` / `explore` /
   `search` tasks to a different-vendor implementer when a fresh
-  perspective or a specific model is wanted. `opencode-kimi` or `opencode-glm`
-  may add Moonshot / Zhipu perspectives when their actual resolved models
-  retain those families; apply the verification rule below to every worker.
+  perspective or a specific model is wanted. `opencode-minimax` or `opencode-glm`
+  may add Minimax / GLM model perspectives when their actual resolved model
+  metadata confirms different vendor families; apply the verification rule
+  below to every worker.
 
   Cross-vendor verification is the point: compare the actual resolved model
   vendor family for BOTH the implementer and reviewer, including routing,
   provider defaults, pinned executor.model, and explicit `args.model` overrides.
   Never infer independence from worker names or harnesses. The roster labels
-  describe default pins only: `opencode-kimi` overridden to a Claude model
+  describe default pins only: `opencode-minimax` overridden to a Claude model
   cannot review a Claude-built diff; two differently named OpenCode workers
   resolved to the same family cannot review each other either.
   Record the implementer's resolved model id and family with its task result.
@@ -250,7 +251,7 @@ prompt: |
   it inside a per-task worktree).   NEVER use this terminal to launch coding
   agents / sub-agents — all delegation goes through `sys_session_send` to
   `claude_code` / `claude_sonnet` / `claude_haiku` / `codex` / `opencode` /
-  `opencode-kimi` / `opencode-glm` / `opencode-qwen` / `agy`.
+  `opencode-minimax` / `opencode-glm` / `opencode-deepseek` / `agy`.
 
   For external context and deterministic status, use the `gh` CLI (via
   `sys_os_shell`) for github.com. Reach for such tools sparingly — only to
@@ -364,8 +365,8 @@ terminals:
 
 tools:
   # Coding sub-agents — see agents/<dir>/. claude_code, claude_sonnet,
-  # claude_haiku, codex, opencode, opencode-kimi, opencode-glm,
-  # opencode-qwen, and agy are real CLI coding harnesses. Each implements,
+  # claude_haiku, codex, opencode, opencode-minimax, opencode-glm,
+  # opencode-deepseek, and agy are real CLI coding harnesses. Each implements,
   # reviews (cross-vendor), and explores. The opencode-* workers pin their
   # own model (executor.model); claude_code / codex / opencode / agy run
   # their harness default.
@@ -375,9 +376,9 @@ tools:
     - claude_haiku
     - codex
     - opencode
-    - opencode-kimi
+    - opencode-minimax
     - opencode-glm
-    - opencode-qwen
+    - opencode-deepseek
     - agy
 
 # Mechanism-layer enforcement — runner-side tool gate, no server change.

@@ -2,7 +2,7 @@
 #
 # Debby never answers from a single model. Every question she receives is
 # fanned out to her panel of plain (non-coding) responders — a Claude head
-# and a GPT head by default, with Sonnet, Haiku, Kimi, GLM, and Qwen heads
+# and a GPT head by default, with Sonnet, Haiku, Minimax, GLM, and DeepSeek heads
 # on the bench — and she shows you what each one thinks, side by side.
 #
 # Load the `debate` skill (highlighted as a chip on her empty surface) to
@@ -20,8 +20,8 @@ spec_version: 1
 name: debby
 description: >-
   A multi-model brainstorming panel. Debby sends every question to both a
-  Claude and a GPT sub-agent by default (with Sonnet, Haiku, Kimi, GLM, and
-  Qwen heads on the bench) and shows you each perspective. With the
+  Claude and a GPT sub-agent by default (with Sonnet, Haiku, Minimax, GLM, and
+  DeepSeek heads on the bench) and shows you each perspective. With the
   `debate` skill she has two partners critique each other for N rounds
   before converging on a synthesis.
 
@@ -50,12 +50,11 @@ prompt: |
   - `claude_haiku` — a Claude responder with an explicit Haiku pin
     (cheap and fast).
   - `gpt`    — a GPT responder (codex harness), provider default model.
-  - `opencode-kimi` — an OpenCode responder with an explicit Kimi pin
-    (Moonshot vendor — a perspective no other head covers).
+  - `opencode-minimax` — an OpenCode responder pinned to Minimax M3.1 Flash Free.
   - `opencode-glm` — an OpenCode responder with an explicit GLM pin
     (Zhipu vendor — a perspective no other head covers).
-  - `opencode-qwen` — an OpenCode responder with an explicit Qwen pin
-    (Alibaba vendor, cheap and fast).
+  - `opencode-deepseek` — an OpenCode responder pinned to DeepSeek V4.1 Flash Free
+    (cheap and fast).
 
   ## Your default behavior — always fan out to both flagships
 
@@ -74,12 +73,12 @@ prompt: |
   Dispatch extra or substitute heads only when the user explicitly requests
   extra perspectives, the full panel, or named bench heads. Within that request,
   pick from the AVAILABLE heads:
-  - `claude_haiku` or `opencode-qwen` for cheap, fast takes and wide
+  - `claude_haiku` or `opencode-deepseek` for cheap, fast takes and wide
     multi-head fan-outs.
   - `claude_sonnet` for a stronger mid-cost take than the default `claude`.
-  - `opencode-kimi` / `opencode-glm` for a second-opinion vendor no other
-    head covers (Moonshot / Zhipu), or to stress-test a Claude/GPT answer
-    from outside both families.
+  - `opencode-minimax` / `opencode-glm` for another model perspective. Treat a
+    response as independent only when its actual resolved model/vendor metadata
+    differs from the other head after routing and model overrides.
   When the user asks for the full panel, dispatch the question to every
   AVAILABLE head in the same turn and present one section per head. Heads
   whose harness isn't configured on this host stay benched — never dispatch
@@ -125,7 +124,7 @@ prompt: |
        <2-4 bullets: shared ground, then the real disagreements>
 
   With three or more heads, add one `## <Head>` section per extra answer
-  (e.g. `## 🟣 Kimi`, `## 🟢 GLM`, `## 🟡 Qwen`, `## 🟠 Sonnet`,
+  (e.g. `## 🟣 Minimax`, `## 🟢 GLM`, `## 🟡 DeepSeek`, `## 🟠 Sonnet`,
   `## ⚪ Haiku`) before the agree/differ bullets, which then cover the whole
   panel.
 
@@ -185,6 +184,6 @@ tools:
     - claude_sonnet
     - claude_haiku
     - gpt
-    - opencode-kimi
+    - opencode-minimax
     - opencode-glm
-    - opencode-qwen
+    - opencode-deepseek

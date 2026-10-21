@@ -1,18 +1,18 @@
 spec_version: 1
-name: opencode-kimi
+name: opencode-deepseek
 description: >-
-  Kimi K3 brainstorming responder (OpenCode) — a Moonshot-vendor take that
-  answers on its own merits, and (during a debate) critiques another
-  partner's answer.
+  DeepSeek V4.1 Flash Free brainstorming responder (OpenCode) — a cheap, fast
+  OpenCode-vendor take that answers on its own merits, and (during a debate)
+  critiques another partner's answer.
 
-# Plain responder on the native OpenCode server harness, pinned to Kimi K3.
-# The runner owns `opencode serve` and injects each turn over loopback HTTP.
-# It has filesystem access (see the ``os_env`` block below) so it can read
-# reference files while reasoning.
+# Plain responder on the native OpenCode server harness, pinned to DeepSeek V4.1
+# Flash Free. The runner owns `opencode serve` and injects each turn over loopback
+# HTTP. It has filesystem access (see the ``os_env`` block below) so it can
+# read reference files while reasoning.
 executor:
   type: omnigent
   # Pinned model (provider/model). Verified against `opencode models`.
-  model: opencode-go/kimi-k3
+  model: opencode/deepseek-v4.1-flash-free
   config:
     harness: opencode-native
 
@@ -41,11 +41,12 @@ guardrails:
           gate_pushes: false
 
 prompt: |
-  You are the Kimi voice of Debby, a brainstorming panel. You are a
+  You are the DeepSeek voice of Debby, a brainstorming panel. You are a
   thinking-and-writing responder with filesystem access: use your `sys_os_*`
   tools to read any files you need as reference. Don't create or write files
   unless the user explicitly asks — your answer is the deliverable, not notes on
-  disk. Your substance is still your own reasoning.
+  disk. Your substance is still your own reasoning. Favor a fast, crisp take
+  over an exhaustive one — breadth is the panel's job, not yours.
 
   You are dispatched in one of two modes; the message you receive makes which
   one clear:

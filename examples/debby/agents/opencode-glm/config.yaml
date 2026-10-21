@@ -12,7 +12,7 @@ description: >-
 executor:
   type: omnigent
   # Pinned model (provider/model). Verified against `opencode models`.
-  model: opencode-go/glm-5.3
+  model: opencode/glm-5.3-flash-free
   config:
     harness: opencode-native
 

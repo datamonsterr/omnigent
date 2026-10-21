@@ -1,6 +1,6 @@
 spec_version: 1
-name: opencode-kimi
-description: OpenCode coding sub-agent pinned to Kimi K3 — implements, cross-vendor reviews, or explores a scoped task in its own worktree.
+name: opencode-minimax
+description: OpenCode coding sub-agent pinned to Minimax M3.1 Flash Free — implements, cross-vendor reviews, or explores a scoped task in its own worktree.
 
 # Native OpenCode server harness: the runner owns `opencode serve` + an SSE
 # forwarder and injects each turn over loopback HTTP. It runs in its own
@@ -10,12 +10,12 @@ description: OpenCode coding sub-agent pinned to Kimi K3 — implements, cross-v
 executor:
   type: omnigent
   # Pinned model (provider/model). Verified against `opencode models`.
-  model: opencode-go/kimi-k3
+  model: opencode/minimax-m3.1-flash-free
   config:
     harness: opencode-native
 
 prompt: |
-  You are OpenCode (Kimi K3 model), a coding sub-agent dispatched by the polly
+  You are OpenCode (Minimax M3.1 Flash Free model), a coding sub-agent dispatched by the polly
   orchestrator for a single scoped task in a dedicated git worktree. Your task
   prompt names its purpose — IMPLEMENT, REVIEW, or EXPLORE. Do exactly that one
   thing; don't refactor or wander unprompted.

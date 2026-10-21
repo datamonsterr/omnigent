@@ -14,7 +14,7 @@ dependency).
    Record the worktree path + branch in the registry
    (`.polly/registry.json`).
 2. Dispatch one implementation sub-agent per task, scoped to its worktree:
-   `sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"|"codex"|"opencode"|"opencode-kimi"|"opencode-glm"|"opencode-qwen"|"agy", title="<task_slug>",
+   `sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"|"codex"|"opencode"|"opencode-minimax"|"opencode-glm"|"opencode-deepseek"|"agy", title="<task_slug>",
    args={purpose: "implement", input: "<task + acceptance contract +
    worktree path>"})`. Use a short task-based title such as `auth-refactor` or
    `fix-sse-error`, never the raw vendor name. State the scope and that it must

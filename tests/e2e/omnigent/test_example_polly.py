@@ -5,7 +5,7 @@ deleted nessie example, whose deep structural pins were folded in here).
 Loads the bundle and asserts the distinctive wiring stays intact: the
 claude-sdk orchestrator brain, the nine cross-vendor coding sub-agents
 (claude_code / claude_sonnet / claude_haiku / codex / opencode /
-opencode-kimi / opencode-glm / opencode-qwen / agy, which implement,
+opencode-minimax / opencode-glm / opencode-deepseek / agy, which implement,
 review, and explore),
 the three spine skills, and the bounds/blast-radius guardrails. Pure spec-load
 — no LLM, no credentials.
@@ -72,8 +72,8 @@ def test_coding_subagents(polly_spec: AgentSpec) -> None:
     """
     The bundle has exactly nine coding sub-agents: ``claude_code`` /
     ``claude_sonnet`` / ``claude_haiku`` (claude-native), ``codex``
-    (codex-native), ``opencode`` / ``opencode-kimi`` / ``opencode-glm`` /
-    ``opencode-qwen`` (opencode-native), and ``agy`` (antigravity-native) on
+    (codex-native), ``opencode`` / ``opencode-minimax`` / ``opencode-glm`` /
+    ``opencode-deepseek`` (opencode-native), and ``agy`` (antigravity-native) on
     the native terminal harnesses. All implement, review, and explore. The
     native harnesses render terminal-first (Chat / Terminal pill) so the human
     can watch or take over.
@@ -95,32 +95,32 @@ def test_coding_subagents(polly_spec: AgentSpec) -> None:
         "claude_sonnet",
         "codex",
         "opencode",
+        "opencode-deepseek",
         "opencode-glm",
-        "opencode-kimi",
-        "opencode-qwen",
+        "opencode-minimax",
     ]
     assert fam["claude_code"] == "claude-native"
     assert fam["claude_sonnet"] == "claude-native"
     assert fam["claude_haiku"] == "claude-native"
     assert fam["codex"] == "codex-native"
     assert fam["opencode"] == "opencode-native"
-    assert fam["opencode-kimi"] == "opencode-native"
+    assert fam["opencode-minimax"] == "opencode-native"
     assert fam["opencode-glm"] == "opencode-native"
-    assert fam["opencode-qwen"] == "opencode-native"
+    assert fam["opencode-deepseek"] == "opencode-native"
     assert fam["agy"] == "antigravity-native"
     # Nine workers share four harnesses (claude-native x3, codex, opencode
     # x4, antigravity) — several workers per harness key, per the roster
     # preflight. Review independence is by MODEL vendor family, not harness:
-    # claude_* = Claude, codex = OpenAI, opencode-kimi = Moonshot,
-    # opencode-glm = Zhipu, opencode-qwen = Alibaba, agy = Gemini.
+    # Worker aliases select pins; review independence uses the resolved model
+    # and vendor metadata after routing and args.model overrides.
     assert len(set(fam.values())) == 4
     # Each pinned worker's executor.model is pinned exactly as declared.
     by_name = {a.name: a for a in polly_spec.sub_agents}
     assert by_name["claude_sonnet"].executor.model == "claude-sonnet-5-5"
     assert by_name["claude_haiku"].executor.model == "claude-haiku-5-5"
-    assert by_name["opencode-kimi"].executor.model == "opencode-go/kimi-k3"
-    assert by_name["opencode-glm"].executor.model == "opencode-go/glm-5.3"
-    assert by_name["opencode-qwen"].executor.model == "opencode-go/qwen3.8-max"
+    assert by_name["opencode-minimax"].executor.model == "opencode/minimax-m3.1-flash-free"
+    assert by_name["opencode-glm"].executor.model == "opencode/glm-5.3-flash-free"
+    assert by_name["opencode-deepseek"].executor.model == "opencode/deepseek-v4.1-flash-free"
     # Headless bypass knobs so workers don't stall on ApprovalCards.
     assert by_name["claude_code"].executor.config.get("permission_mode") == "auto"
     assert by_name["claude_sonnet"].executor.config.get("permission_mode") == "auto"
@@ -133,9 +133,9 @@ def test_coding_subagents(polly_spec: AgentSpec) -> None:
         "claude_haiku",
         "codex",
         "opencode",
-        "opencode-kimi",
+        "opencode-minimax",
         "opencode-glm",
-        "opencode-qwen",
+        "opencode-deepseek",
         "agy",
     ):
         prompt = (_POLLY_BUNDLE / "agents" / name / "config.yaml").read_text(encoding="utf-8")
@@ -158,11 +158,11 @@ def test_review_independence_uses_resolved_models(relative_path: str) -> None:
     assert "routing" in text and "args.model" in text
     assert "Never infer independence from worker names or harnesses" in text
     assert (
-        "`opencode-kimi` overridden to a Claude model cannot review a Claude-built diff"
+        "`opencode-minimax` overridden to a Claude model cannot review a Claude-built diff"
     ) in text
     assert "unknown family cannot establish independence" in text
     assert "fallback" in text and "sys_list_models" in text
-    assert "`opencode-kimi` counts as Moonshot" not in text
+    assert "`opencode-minimax` counts as OpenCode" not in text
     assert "trio all count as Claude" not in text
 
 
@@ -296,9 +296,9 @@ def test_polly_test_count_ground_truth_guidance() -> None:
         "claude_haiku",
         "codex",
         "opencode",
-        "opencode-kimi",
+        "opencode-minimax",
         "opencode-glm",
-        "opencode-qwen",
+        "opencode-deepseek",
         "agy",
     ):
         worker = (_POLLY_BUNDLE / "agents" / name / "config.yaml").read_text(encoding="utf-8")
@@ -405,8 +405,8 @@ def test_investigation_skill_delegates_read_only_work() -> None:
     assert "Dispatch each task to `claude_code`, `claude_sonnet`, " in compact
     assert (
         '`sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"'
-        '|"codex"|"opencode"|"opencode-kimi"|"opencode-glm"'
-        '|"opencode-qwen"|"agy", '
+        '|"codex"|"opencode"|"opencode-minimax"|"opencode-glm"'
+        '|"opencode-deepseek"|"agy", '
         'title="explore-<task_slug>", '
         'args={purpose: "explore", '
         'input: "<question + exact scope + evidence requested>"})`'
@@ -493,9 +493,9 @@ def test_subagent_guardrails(polly_spec: AgentSpec) -> None:
         "claude_haiku",
         "codex",
         "opencode",
-        "opencode-kimi",
+        "opencode-minimax",
         "opencode-glm",
-        "opencode-qwen",
+        "opencode-deepseek",
         "agy",
     ):
         guardrails = by_name[name].guardrails
@@ -531,6 +531,6 @@ def test_function_policies_have_nonempty_arguments(polly_spec: AgentSpec) -> Non
             checked += 1
     # orchestrator: blast_radius + spawn_bounds + headless_subagent_purpose_guard
     # = 3; sub-agents: blast_radius x9 (claude_code, claude_sonnet,
-    # claude_haiku, codex, opencode, opencode-kimi, opencode-glm,
-    # opencode-qwen, agy) = 9 -> 12 total. Fewer = a policy dropped.
+    # claude_haiku, codex, opencode, opencode-minimax, opencode-glm,
+    # opencode-deepseek, agy) = 9 -> 12 total. Fewer = a policy dropped.
     assert checked == 12, f"expected 12 function policies in the bundle, inspected {checked}"

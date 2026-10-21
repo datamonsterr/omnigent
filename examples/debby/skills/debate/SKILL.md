@@ -13,7 +13,7 @@ Without an explicit user request, use only `claude` + `gpt`.
 Cost, speed, task difficulty, and debate mode do not opt in the bench.
 Only when the user explicitly requests extra perspectives, the full panel, or
 named bench heads may you select two AVAILABLE requested heads to debate
-(e.g. `opencode-kimi` vs `claude_sonnet`), keeping one stable `title` per debater.
+(e.g. `opencode-minimax` vs `claude_sonnet`), keeping one stable `title` per debater.
 In the procedure below, substitute the selected debaters consistently for
 `claude` and `gpt`; never silently substitute an unsolicited bench head.
 

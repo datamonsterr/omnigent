@@ -202,6 +202,13 @@ def test_scan_rejects_undeclared_example_pins(
 
 def test_declared_example_pins_have_no_other_model_hardcodes() -> None:
     assert len(EXAMPLE_PIN_PATHS) == 10
+    assert {
+        path.as_posix() for path in EXAMPLE_PIN_PATHS if path.parts[3].startswith("opencode-")
+    } == {
+        f"examples/{bundle}/agents/{worker}/config.yaml"
+        for bundle in ("polly", "debby")
+        for worker in ("opencode-minimax", "opencode-glm", "opencode-deepseek")
+    }
     for path in EXAMPLE_PIN_PATHS:
         assert path.is_file()
         assert scan(path) == []
