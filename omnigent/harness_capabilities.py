@@ -62,7 +62,7 @@ class EffortFamily(str, Enum):
     # (Sol reaches ``ultra``); the SDK codex wire caps at ``xhigh``.
     CODEX_NATIVE = "codex-native"
     # OpenCode has no native effort axis: the dial selects a model tier
-    # (see ``OPENCODE_EFFORT_FAMILY_TIERS`` in reasoning_effort.py).
+    # (see ``OPENCODE_EFFORT_FAMILY_TIERS`` in model_fallbacks.py).
     OPENCODE = "opencode"
 
 

@@ -29,6 +29,7 @@ from omnigent.account_pools.labels import (
 )
 from omnigent.account_pools.quota import AccountQuota, QuotaTarget, quota_target_for
 from omnigent.entities.account_pool import AccountPool, AccountPoolAccount
+from omnigent.stores.account_pool_store import normalize_account_pool_harness
 
 
 class AccountPoolExhaustedError(Exception):
@@ -417,7 +418,8 @@ def prepare_session_account(
     :param model: The model the session would run.
     :returns: The reservation handle when an account was reserved, else
         ``None``.
-    :raises ValueError: when a pinned account conflicts with a pinned home.
+    :raises ValueError: when a pin is unknown, disabled, incompatible, exhausted,
+        or conflicts with a pinned home.
     :raises AccountPoolExhaustedError: when the pool has no eligible account.
     """
     if conversation_store is not None and manager.conversation_store is None:
@@ -447,19 +449,26 @@ def prepare_session_account(
 
     if pinned_id:
         pinned_account = manager.store.get_account(pinned_id)
-        if pinned_account is not None:
-            if pinned_homes and not home_matches(pinned_account):
-                raise ValueError(f"Pinned account {pinned_id!r} conflicts with its account home")
-            home = _home_for_account(pinned_account)
-            if home:
-                if pinned_account.home_kind == "codex_home":
-                    initial_labels[CODEX_HOME_LABEL_KEY] = home
-                elif pinned_account.home_kind == "gemini_dir":
-                    initial_labels[GEMINI_DIR_LABEL_KEY] = home
-            pinned_pool = manager.store.get_pool(pinned_account.pool_id)
-            initial_labels[ACCOUNT_POOL_LABEL_KEY] = (
-                pinned_pool.name if pinned_pool is not None else pinned_account.pool_id
-            )
+        if pinned_account is None:
+            raise ValueError(f"Pinned account {pinned_id!r} is unknown")
+        if not pinned_account.enabled:
+            raise ValueError(f"Pinned account {pinned_id!r} is disabled")
+        pinned_pool = manager.store.get_pool(pinned_account.pool_id)
+        if pinned_pool is None or normalize_account_pool_harness(
+            pinned_pool.harness
+        ) != normalize_account_pool_harness(harness):
+            raise ValueError(f"Pinned account {pinned_id!r} does not serve harness {harness!r}")
+        if manager.get_quota(pinned_account, model=model).is_exhausted():
+            raise ValueError(f"Pinned account {pinned_id!r} is exhausted or unavailable")
+        if pinned_homes and not home_matches(pinned_account):
+            raise ValueError(f"Pinned account {pinned_id!r} conflicts with its account home")
+        home = _home_for_account(pinned_account)
+        if home:
+            if pinned_account.home_kind == "codex_home":
+                initial_labels[CODEX_HOME_LABEL_KEY] = home
+            elif pinned_account.home_kind == "gemini_dir":
+                initial_labels[GEMINI_DIR_LABEL_KEY] = home
+        initial_labels[ACCOUNT_POOL_LABEL_KEY] = pinned_pool.name
         initial_labels[ACCOUNT_ID_LABEL_KEY] = pinned_id
         return None
 

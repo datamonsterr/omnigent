@@ -114,7 +114,7 @@ def _quota_response(quota: AccountQuota | None, now: int) -> dict[str, Any] | No
     return {
         "status": quota.status if fresh else "unknown",
         "known": fresh and quota.is_known(),
-        "exhausted": quota.is_exhausted,
+        "exhausted": quota.is_exhausted(),
         "model_family": quota.model_family,
         "observed_at": quota.observed_at,
         "stale": not fresh,

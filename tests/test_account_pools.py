@@ -237,6 +237,42 @@ def test_pin_preservation_loose_key() -> None:
     assert labels[CODEX_HOME_LABEL_KEY] == str(Path("/tmp/c1"))
 
 
+@pytest.mark.parametrize("label_key", [ACCOUNT_ID_LABEL_KEY, "account_id"])
+@pytest.mark.parametrize(
+    "invalid_pin,reason",
+    [
+        ("missing", "unknown"),
+        ("disabled", "disabled"),
+        ("agy-1", "harness"),
+        ("exhausted", "exhausted"),
+        ("blocked", "exhausted"),
+    ],
+)
+def test_explicit_invalid_pin_rejects_without_fallback(
+    label_key: str, invalid_pin: str, reason: str
+) -> None:
+    """A bad explicit pin cannot silently use the healthy account or a default home."""
+    disabled = _account("disabled", "/tmp/disabled")
+    disabled.enabled = False
+    store = FakeStore(
+        [
+            _pool(
+                "codex",
+                [disabled, _account("exhausted"), _account("blocked"), _account("healthy")],
+            ),
+            _pool("antigravity", [_account("agy-1", "/tmp/agy", HOME_KIND_GEMINI)]),
+        ]
+    )
+    store.snapshots = {
+        account_id: AccountQuota(status=account_id, observed_at=int(time.time()))
+        for account_id in ("exhausted", "blocked")
+    }
+    labels = {label_key: invalid_pin}
+    with pytest.raises(ValueError, match=reason):
+        prepare_session_account(labels, "codex-native", None, _manager(store))
+    assert labels == {label_key: invalid_pin}
+
+
 def test_count_first_then_remaining_quota() -> None:
     """Fewest active sessions wins; quota breaks the tie."""
     pool = _pool("codex", [_account("codex-1"), _account("codex-2")])

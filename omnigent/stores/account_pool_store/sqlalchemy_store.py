@@ -28,7 +28,7 @@ from omnigent.entities.account_pool import (
     AccountQuotaWindow,
 )
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.stores.account_pool_store import AccountPoolStore
+from omnigent.stores.account_pool_store import AccountPoolStore, normalize_account_pool_harness
 
 #: Metadata keys that must never be persisted — an account row points at a
 #: credential home, it does not carry the credential.
@@ -122,23 +122,6 @@ def _to_quota_entity(row: SqlAccountQuotaSnapshot) -> AccountQuota:
         model_family=row.model_family,
         observed_at=row.observed_at,
     )
-
-
-def _normalize_harness(harness: str | None) -> str:
-    """Normalize a harness spelling to its family name.
-
-    ``codex-native``, ``codex_sdk``, and ``codex`` all name the same family.
-
-    :param harness: The harness spelling, or ``None``.
-    :returns: The normalized family name, or ``""`` when there is none.
-    """
-    if not harness:
-        return ""
-    normalized = harness.strip().lower()
-    for suffix in ("-native", "-sdk", "-ui"):
-        if normalized.endswith(suffix):
-            normalized = normalized[: -len(suffix)]
-    return normalized
 
 
 class SqlAlchemyAccountPoolStore(AccountPoolStore):
@@ -250,7 +233,7 @@ class SqlAlchemyAccountPoolStore(AccountPoolStore):
         """Return the pool that serves a harness family."""
         if not harness:
             return None
-        normalized = _normalize_harness(harness)
+        normalized = normalize_account_pool_harness(harness)
         with self._session("select_account_pool_by_harness") as session:
             rows = (
                 session.execute(
@@ -262,7 +245,7 @@ class SqlAlchemyAccountPoolStore(AccountPoolStore):
                 .all()
             )
             for row in rows:
-                if _normalize_harness(row.harness) == normalized:
+                if normalize_account_pool_harness(row.harness) == normalized:
                     return _to_pool_entity(row, self._accounts_for(session, row.id))
             for row in rows:
                 if row.name == "default":

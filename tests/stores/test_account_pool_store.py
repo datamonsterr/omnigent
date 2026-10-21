@@ -55,7 +55,7 @@ def test_pool_lookup_by_harness_normalizes_the_spelling(
 ) -> None:
     """``codex``, ``codex-native``, and ``codex-sdk`` resolve to one pool."""
     store.create_pool("pool-codex", "codex-native", "codex-native")
-    for spelling in ("codex-native", "codex", "codex-sdk"):
+    for spelling in ("codex-native", "codex", "codex-sdk", "codex_sdk", "native-codex"):
         pool = store.get_pool_for_harness(spelling)
         assert pool is not None, spelling
         assert pool.id == "pool-codex"

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 import httpx
 
+from omnigent.account_pools.labels import ACCOUNT_ID_LABEL_KEY
 from omnigent.debug_logging import runner_primary_session_id
 from omnigent.harness_aliases import (
     canonicalize_harness,
@@ -60,6 +61,7 @@ from omnigent.inner.executor import ToolCallStatus, classify_tool_result
 from omnigent.models.model_override import (
     harness_supports_model_override,
     model_family_mismatch,
+    normalize_claude_model_alias,
     normalize_model_for_provider,
     validate_model_override,
 )
@@ -152,6 +154,18 @@ def _string_object_dict(value: object) -> _JsonObject | None:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         return None
     return cast("_JsonObject", value)
+
+
+def _route_identifier(value: object, kind: str) -> str:
+    """Keep one identifier in one URL segment, including legacy prefixed IDs."""
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
+        raise ValueError(f"{kind} id must contain only letters, digits, underscores or hyphens")
+    return value
+
+
+def _session_url(session_id: object) -> str:
+    """Build a session URL from one identifier, retaining legacy prefixed ids."""
+    return f"/v1/sessions/{_route_identifier(session_id, 'Session')}"
 
 
 def _optional_string(value: object) -> str | None:
@@ -1358,7 +1372,7 @@ async def _list_child_sessions(
         params["tool"] = tool
         params["session_name"] = session_name
     resp = await server_client.get(
-        f"/v1/sessions/{conversation_id}/child_sessions",
+        f"{_session_url(conversation_id)}/child_sessions",
         params=params,
         timeout=30.0,
     )
@@ -1448,8 +1462,8 @@ async def _session_turn_actor(
 ) -> str | None:
     """Return the parent turn actor label for runner-originated callbacks."""
     try:
-        resp = await server_client.get(f"/v1/sessions/{conversation_id}", timeout=10.0)
-    except (httpx.HTTPError, RuntimeError):
+        resp = await server_client.get(f"{_session_url(conversation_id)}", timeout=10.0)
+    except (httpx.HTTPError, ValueError, RuntimeError):
         return None
     if resp.status_code != 200:
         return None
@@ -1476,11 +1490,11 @@ async def _patch_subagent_label(
     """
     try:
         resp = await server_client.patch(
-            f"/v1/sessions/{child_session_id}",
+            f"{_session_url(child_session_id)}",
             json={"labels": {key: value}},
             timeout=30.0,
         )
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         return f"{type(exc).__name__}: {exc}"
     if resp.status_code >= 400:
         return f"{resp.status_code} {resp.text[:200]}"
@@ -1536,7 +1550,7 @@ async def _post_child_message_event(
         }
 
     resp = await server_client.post(
-        f"/v1/sessions/{session_id}/events",
+        f"{_session_url(session_id)}/events",
         json=_payload(created_by),
         # This message is gated at the recipient's REQUEST phase, which can
         # PARK on a human ASK (e.g. session_cost_budget) up to the policy's
@@ -1553,7 +1567,7 @@ async def _post_child_message_event(
         session_id,
     )
     return await server_client.post(
-        f"/v1/sessions/{session_id}/events",
+        f"{_session_url(session_id)}/events",
         json=_payload(None),
         timeout=_ASK_GATE_DELIVERY_TIMEOUT,
     )
@@ -1736,6 +1750,16 @@ def _subagent_model_from_args(args: _JsonObject) -> str | None:
     return validate_model_override(raw_model)
 
 
+def _dispatch_account_from_args(args: _JsonObject) -> str | None:
+    """Read an optional pool account id; reject malformed explicit pins."""
+    if "account" not in args:
+        return None
+    account = args["account"]
+    if not isinstance(account, str) or not account.strip():
+        raise ValueError("'account' must be a non-empty string when provided")
+    return account.strip()
+
+
 async def _inherited_parent_model(
     *,
     server_client: httpx.AsyncClient,
@@ -1781,8 +1805,8 @@ async def _inherited_parent_model(
     if not harness_supports_model_override(child_harness):
         return None
     try:
-        resp = await server_client.get(f"/v1/sessions/{conversation_id}", timeout=10.0)
-    except (httpx.HTTPError, RuntimeError):
+        resp = await server_client.get(f"{_session_url(conversation_id)}", timeout=10.0)
+    except (httpx.HTTPError, ValueError, RuntimeError):
         return None
     if resp.status_code != 200:
         return None
@@ -1946,10 +1970,10 @@ async def _teardown_failed_child(
     for attempt in range(2):
         try:
             resp = await server_client.delete(
-                f"/v1/sessions/{child_session_id}",
+                f"{_session_url(child_session_id)}",
                 timeout=30.0,
             )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
             last_error = f"{type(exc).__name__}: {exc}"
         else:
             if resp.status_code < 400:
@@ -2029,11 +2053,11 @@ async def _build_subagent_message_content(
 
     try:
         copy_resp = await server_client.post(
-            f"/v1/sessions/{child_session_id}/resources/files:copy",
+            f"{_session_url(child_session_id)}/resources/files:copy",
             json={"source_session_id": parent_session_id, "file_ids": file_ids},
             timeout=30.0,
         )
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         return CopyResult(
             error=f"Error: failed to copy files to child: {type(exc).__name__}: {exc}"
         )
@@ -2359,6 +2383,9 @@ def _normalize_subagent_model(
     the child's provider cannot be determined, the id passes through
     unchanged — the existing fail-loud harness error stays the net.
 
+    Short Claude family names are normalized to CLI/SDK aliases before
+    provider localization; versioned model ids retain their spelling.
+
     :param model: The validated requested model id, e.g.
         ``"claude-sonnet-4-6"``.
     :param sub_agent_name: Name of the sub-agent being dispatched.
@@ -2375,6 +2402,7 @@ def _normalize_subagent_model(
         and binding_for_harness(load_runtime_inference_config(), harness) is not None
     ):
         return model
+    model = normalize_claude_model_alias(harness, model)
     sub_spec = _find_subagent_spec(sub_agent_name, agent_spec)
     if sub_spec is None or harness is None:
         return model
@@ -2491,6 +2519,12 @@ async def _execute_subagent_tool(
         return "Error: sys_session_send requires parent session inbox"
 
     try:
+        raw_args = args.get("args")
+        account = _dispatch_account_from_args(raw_args if isinstance(raw_args, dict) else {})
+    except ValueError as exc:
+        return f"Error: sys_session_send invalid 'account': {exc}"
+
+    try:
         model = _subagent_model_from_args(args)
     except ValueError as exc:
         return f"Error: sys_session_send invalid 'model': {exc}"
@@ -2526,6 +2560,13 @@ async def _execute_subagent_tool(
             return (
                 "Error: sys_session_send received both 'session_id' and "
                 "'agent'/'title' — supply exactly one addressing mode"
+            )
+        if account is not None:
+            return (
+                "Error: sys_session_send 'account' applies only when a "
+                "sub-agent session is first created; it cannot change an "
+                "existing session. Re-send without 'account' to continue "
+                f"session {target_session_id!r}."
             )
         if model is not None:
             return (
@@ -2605,7 +2646,7 @@ async def _execute_subagent_tool(
     if parent_agent_id is None:
         try:
             sess_resp = await server_client.get(
-                f"/v1/sessions/{conversation_id}",
+                f"{_session_url(conversation_id)}",
                 timeout=10.0,
             )
             if sess_resp.status_code == 200:
@@ -2634,6 +2675,13 @@ async def _execute_subagent_tool(
         child_session_id = existing.get("id")
         if not isinstance(child_session_id, str) or not child_session_id:
             return "Error: existing child session is missing id"
+        if account is not None:
+            return (
+                "Error: sys_session_send 'account' applies only when a "
+                f"sub-agent session is first created; {child_session_id} "
+                "already exists. Re-send without 'account' to continue it, "
+                "or sys_session_close it first to spawn a fresh session."
+            )
         if model is not None:
             # A native child bakes --model in at terminal launch, so a
             # mid-conversation override would be silently ignored there.
@@ -2804,12 +2852,15 @@ async def _execute_subagent_tool(
         # Create child session on the server (no initial items —
         # those go via a separate POST so the server forwards them
         # to the runner and triggers a turn).
+        create_labels = {_subagent_work.SUBAGENT_DISPATCH_ID_LABEL_KEY: work_id}
+        if account is not None:
+            create_labels[ACCOUNT_ID_LABEL_KEY] = account
         create_body: _JsonObject = {
             "agent_id": parent_agent_id,
             "parent_session_id": conversation_id,
             "title": f"{sub_agent_name}:{session_name}",
             "sub_agent_name": sub_agent_name,
-            "labels": {_subagent_work.SUBAGENT_DISPATCH_ID_LABEL_KEY: work_id},
+            "labels": create_labels,
         }
         if harness_override_canonical is not None:
             create_body["harness_override"] = harness_override_canonical
@@ -2969,7 +3020,7 @@ async def _execute_subagent_tool(
             }
             try:
                 pol_resp = await server_client.post(
-                    f"/v1/sessions/{child_session_id}/policies",
+                    f"{_session_url(child_session_id)}/policies",
                     json=policy_body,
                     timeout=10.0,
                 )
@@ -3171,7 +3222,7 @@ async def _send_to_existing_session(
     from omnigent.runner import subagent_work as _subagent_work
 
     try:
-        snap = await server_client.get(f"/v1/sessions/{target_session_id}", timeout=30.0)
+        snap = await server_client.get(f"{_session_url(target_session_id)}", timeout=30.0)
     except Exception as exc:  # noqa: BLE001
         return f"Error: sys_session_send failed to look up session: {exc}"
     if snap.status_code == 404:
@@ -3308,6 +3359,7 @@ def _build_session_create_body(
     message: object,
     model: object = None,
     reasoning_effort: object = None,
+    account: str | None = None,
 ) -> _JsonObject:
     """
     Build the JSON ``POST /v1/sessions`` body for ``sys_session_create``.
@@ -3335,12 +3387,15 @@ def _build_session_create_body(
         written as ``model_override`` on the session.
     :param reasoning_effort: Optional reasoning level, e.g. ``"high"``;
         written as ``reasoning_effort`` on the session.
+    :param account: Optional pool account id, persisted as a session label.
     :returns: The JSON request body.
     """
     body: _JsonObject = {
         "agent_id": agent_id,
         "parent_session_id": conversation_id,
     }
+    if account is not None:
+        body["labels"] = {ACCOUNT_ID_LABEL_KEY: account}
     if isinstance(title, str) and title:
         body["title"] = title
     if isinstance(model, str) and model:
@@ -3420,6 +3475,38 @@ def _finalize_created_session(
     )
 
 
+async def _session_create_agent_id_by_name(
+    name: str,
+    server_client: httpx.AsyncClient,
+) -> str:
+    """Resolve an exact name in the sys_agent_list server registry."""
+    after: str | None = None
+    seen: set[str] = set()
+    matches: set[str] = set()
+    while True:
+        page = await _agent_list_fetch("/v1/agents", server_client, after=after, limit=100)
+        if page.failed:
+            raise ValueError("agent registry lookup failed; retry or use agent_id")
+        matches.update(
+            row["id"]
+            for row in page.rows
+            if row.get("name") == name and isinstance(row.get("id"), str)
+        )
+        if not page.has_more:
+            break
+        after = page.next_after
+        if not after or after in seen:
+            raise ValueError("agent registry pagination failed; use agent_id")
+        seen.add(after)
+    if not matches:
+        raise ValueError(
+            f"agent_not_found: {name!r}; use sys_agent_list to find a registered agent"
+        )
+    if len(matches) != 1:
+        raise ValueError(f"agent name {name!r} is ambiguous; use agent_id")
+    return matches.pop()
+
+
 async def _execute_session_create(
     args: _JsonObject,
     *,
@@ -3432,7 +3519,10 @@ async def _execute_session_create(
     """
     Create a child session (``sys_session_create``).
 
-    Two modes, split on the provided argument (exactly one required):
+    Three modes, split on the provided argument (exactly one required):
+
+    - ``agent`` — resolve an exact registered name from the catalog used
+      by ``sys_agent_list``, then use the existing-agent JSON create.
 
     - ``agent_id`` — spawn from an existing agent via the JSON
       ``POST /v1/sessions`` create.
@@ -3441,17 +3531,17 @@ async def _execute_session_create(
       inside the caller's working directory) via the multipart
       ``POST /v1/sessions`` create.
 
-    Both modes force ``parent_session_id`` to the caller (child-only).
+    All modes force ``parent_session_id`` to the caller (child-only).
     The child inherits the caller's runner (server-side affinity), so a
     queued initial message starts a turn immediately. Returns a handle
     the orchestrator can monitor (``sys_session_get_history`` /
     ``sys_session_get_info``) or drive (``sys_session_send`` by
-    ``conversation_id``) — unlike named-mode send, it does NOT block on
+    ``session_id``) — unlike named-mode send, it does NOT block on
     the child turn.
 
     Maps a 404 to ``agent_not_found`` and 401/403 to ``access_denied``.
 
-    :param args: Parsed arguments; exactly one of ``agent_id`` /
+    :param args: Parsed arguments; exactly one of ``agent`` / ``agent_id`` /
         ``config_path`` required, ``title`` / ``message`` optional.
     :param server_client: HTTP client pointed at the Omnigent server; ``None``
         returns an error string.
@@ -3470,30 +3560,47 @@ async def _execute_session_create(
     if conversation_id is None:
         return json.dumps({"error": "sys_session_create requires a session id"})
     agent_id = args.get("agent_id")
+    agent_name = args.get("agent")
     config_path = args.get("config_path")
     has_agent_id = isinstance(agent_id, str) and bool(agent_id)
+    has_agent_name = isinstance(agent_name, str) and bool(agent_name.strip())
     has_config_path = isinstance(config_path, str) and bool(config_path)
-    if has_agent_id == has_config_path:
-        # Fail loud on both-or-neither: the two modes create different
-        # agents, so silently preferring one would mislaunch.
+    if sum((has_agent_id, has_agent_name, has_config_path)) != 1:
         return json.dumps(
             {
                 "error": (
-                    "sys_session_create requires exactly one of 'agent_id' "
-                    "(existing agent) or 'config_path' (new agent from a "
-                    "local config)"
+                    "sys_session_create requires exactly one of 'agent_id', "
+                    "'agent' (registered name), or 'config_path' (new agent "
+                    "from a local config)"
                 )
             }
         )
+    try:
+        account = _dispatch_account_from_args(args)
+        if has_agent_name:
+            agent_id = await _session_create_agent_id_by_name(
+                str(agent_name).strip(), server_client
+            )
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
     if has_config_path:
         # The multipart create carries only the config bundle, so an effort
         # passed here would never reach the child. Refuse instead of dropping it.
+        if account is not None:
+            return json.dumps(
+                {
+                    "error": (
+                        "sys_session_create 'account' requires agent or agent_id; "
+                        "config_path cannot carry it"
+                    )
+                }
+            )
         if args.get("reasoning_effort") is not None:
             return json.dumps(
                 {
                     "error": (
                         "sys_session_create 'reasoning_effort' is supported only "
-                        "with 'agent_id'; the 'config_path' create cannot carry "
+                        "with 'agent' or 'agent_id'; the 'config_path' create cannot carry "
                         "it. Set the effort in the config you upload instead."
                     )
                 }
@@ -3514,6 +3621,7 @@ async def _execute_session_create(
         args.get("message"),
         model=args.get("model"),
         reasoning_effort=args.get("reasoning_effort"),
+        account=account,
     )
     try:
         resp = await server_client.post("/v1/sessions", json=body, timeout=30.0)
@@ -3602,7 +3710,7 @@ async def _post_child_first_message(
     """
     try:
         msg_resp = await server_client.post(
-            f"/v1/sessions/{child_session_id}/events",
+            f"{_session_url(child_session_id)}/events",
             json={
                 "type": "message",
                 "data": {
@@ -4270,7 +4378,7 @@ async def _timer_loop(
                 text += f"\nnote: {note!r}"
             try:
                 resp = await server_client.post(
-                    f"/v1/sessions/{conversation_id}/events",
+                    f"{_session_url(conversation_id)}/events",
                     json={
                         "type": "message",
                         "data": {
@@ -4284,7 +4392,7 @@ async def _timer_loop(
                 # httpx does not raise on 4xx/5xx by default; treat those
                 # as delivery failures so they share the warning path below.
                 resp.raise_for_status()
-            except (httpx.HTTPError, asyncio.TimeoutError):
+            except (httpx.HTTPError, ValueError, asyncio.TimeoutError):
                 _logger.warning(
                     "Timer %s firing persist failed for %s",
                     timer_id,
@@ -4356,7 +4464,7 @@ async def _execute_comment_tool(
         args: _JsonObject = json.loads(arguments) if arguments.strip() else {}
     except json.JSONDecodeError:
         return json.dumps({"error": f"{tool_name}: malformed JSON arguments"})
-    base = f"/v1/sessions/{conversation_id}/comments"
+    base = f"{_session_url(conversation_id)}/comments"
 
     if tool_name == ListCommentsTool.name():
         params: dict[str, str] = {}
@@ -4391,7 +4499,7 @@ async def _execute_comment_tool(
         )
     try:
         resp = await server_client.patch(
-            f"{base}/{comment_id}",
+            f"{base}/{_route_identifier(comment_id, 'Comment')}",
             json={"status": status},
             timeout=30.0,
         )
@@ -4449,7 +4557,7 @@ async def _execute_browser_tool(
     action = tool_name[len("browser_") :]
     try:
         resp = await server_client.post(
-            f"/v1/sessions/{conversation_id}/browser/action_request",
+            f"{_session_url(conversation_id)}/browser/action_request",
             json={"action": action, "args": args},
             timeout=_BROWSER_ACTION_TIMEOUT,
         )
@@ -4458,7 +4566,7 @@ async def _execute_browser_tool(
         # fires (read(60) > server await(30)); this is the belt-and-suspenders
         # path if the server itself stalls.
         return _BROWSER_TIMEOUT_ERROR
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         return json.dumps({"error": f"{tool_name} failed: {type(exc).__name__}: {exc}"})
     if resp.status_code >= 400:
         return json.dumps({"error": f"{tool_name} returned {resp.status_code}: {resp.text[:200]}"})
@@ -4593,7 +4701,7 @@ async def _execute_add_policy(
 
     try:
         resp = await server_client.post(
-            f"/v1/sessions/{conversation_id}/policies",
+            f"{_session_url(conversation_id)}/policies",
             json=payload,
             timeout=30.0,
         )
@@ -5029,7 +5137,7 @@ async def _session_get_info_via_rest(
         )
     try:
         resp = await server_client.get(
-            f"/v1/sessions/{raw_target}",
+            f"{_session_url(raw_target)}",
             params={"include_items": "false", "include_liveness": "false"},
             timeout=30.0,
         )
@@ -5205,7 +5313,7 @@ async def _session_share_via_rest(
         )
     try:
         resp = await server_client.put(
-            f"/v1/sessions/{target}/permissions",
+            f"{_session_url(target)}/permissions",
             json={"user_id": user_id, "level": level_by_name[level_name]},
             timeout=30.0,
         )
@@ -5324,7 +5432,7 @@ async def _agent_get_via_rest(
     :returns: JSON agent-metadata object, or a JSON error object.
     """
     try:
-        resp = await server_client.get(f"/v1/sessions/{session_id}/agent", timeout=30.0)
+        resp = await server_client.get(f"{_session_url(session_id)}/agent", timeout=30.0)
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"sys_agent_get failed: {exc}"})
     if resp.status_code == 404:
@@ -5421,7 +5529,7 @@ async def _agent_download_via_rest(
         or a JSON error object.
     """
     try:
-        resp = await server_client.get(f"/v1/sessions/{session_id}/agent/contents", timeout=60.0)
+        resp = await server_client.get(f"{_session_url(session_id)}/agent/contents", timeout=60.0)
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"sys_agent_download failed: {exc}"})
     if resp.status_code == 404:
@@ -5601,7 +5709,7 @@ async def _spawn_family(
         return _spawn_family_cache[conversation_id]
     try:
         resp = await server_client.get(
-            f"/v1/sessions/{conversation_id}",
+            f"{_session_url(conversation_id)}",
             # Only the routing fields are read, so skip the history and
             # runner-liveness work the full snapshot would do.
             params={"include_items": "false", "include_liveness": "false"},
@@ -5681,7 +5789,7 @@ async def _agent_list_host_readiness(
                     return None
                 seen.add(conversation_id)
                 response = await server_client.get(
-                    f"/v1/sessions/{conversation_id}",
+                    f"{_session_url(conversation_id)}",
                     params={"include_items": "false", "include_liveness": "false"},
                     timeout=_AGENT_READINESS_TIMEOUT_S,
                 )
@@ -5939,7 +6047,7 @@ async def _rename_current_session_via_rest(
     # the old seed-gated endpoint's response for child sessions.
     try:
         info_response = await server_client.get(
-            f"/v1/sessions/{conversation_id}",
+            f"{_session_url(conversation_id)}",
             # Skip the transcript and the runner/host liveness lookup — the
             # probe only needs parent_session_id.
             params={"include_items": "false", "include_liveness": "false"},
@@ -5976,7 +6084,7 @@ async def _rename_current_session_via_rest(
         )
     try:
         response = await server_client.post(
-            f"/v1/sessions/{conversation_id}/agent-title",
+            f"{_session_url(conversation_id)}/agent-title",
             json={"title": normalized_title},
             timeout=90.0,
         )
@@ -6024,7 +6132,7 @@ async def _collect_sub_agents(
     """
     try:
         resp = await server_client.get(
-            f"/v1/sessions/{conversation_id}/child_sessions",
+            f"{_session_url(conversation_id)}/child_sessions",
             params={"limit": 100},
             timeout=30.0,
         )
@@ -6040,7 +6148,7 @@ async def _collect_sub_agents(
         result.append({"agent": "main", "title": None, "conversation_id": parent_id})
         try:
             sib_resp = await server_client.get(
-                f"/v1/sessions/{parent_id}/child_sessions",
+                f"{_session_url(parent_id)}/child_sessions",
                 params={"limit": 100},
                 timeout=30.0,
             )
@@ -6203,7 +6311,7 @@ async def _session_parent_id(
     :returns: The parent session id, or ``None``.
     """
     try:
-        snap = await server_client.get(f"/v1/sessions/{conversation_id}", timeout=30.0)
+        snap = await server_client.get(f"{_session_url(conversation_id)}", timeout=30.0)
     except Exception:  # noqa: BLE001
         return None
     if snap.status_code != 200:
@@ -6255,7 +6363,7 @@ async def _session_get_history_via_rest(
         return content_offset_chars
     try:
         resp = await server_client.get(
-            f"/v1/sessions/{target_id}/items",
+            f"{_session_url(target_id)}/items",
             params={"limit": tail_items, "order": "desc"},
             timeout=30.0,
         )
@@ -6310,7 +6418,7 @@ async def _fetch_close_target(
         otherwise) suitable for returning verbatim to the LLM.
     """
     try:
-        snap = await server_client.get(f"/v1/sessions/{target_id}", timeout=30.0)
+        snap = await server_client.get(f"{_session_url(target_id)}", timeout=30.0)
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"sys_session_close failed: {exc}"})
     if snap.status_code == 404:
@@ -6356,7 +6464,7 @@ async def _close_tree_scope_error(
     """
     try:
         caller_snap = await server_client.get(
-            f"/v1/sessions/{caller_conversation_id}", timeout=30.0
+            f"{_session_url(caller_conversation_id)}", timeout=30.0
         )
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"sys_session_close failed: {exc}"})
@@ -6430,7 +6538,7 @@ async def _session_close_via_rest(
     new_title = f"{parsed.agent}:{parsed.title}{_CLOSED_TITLE_INFIX}{target_id}"
     try:
         patch = await server_client.patch(
-            f"/v1/sessions/{target_id}",
+            f"{_session_url(target_id)}",
             json={
                 "title": new_title,
                 "labels": {CLOSED_LABEL_KEY: CLOSED_LABEL_VALUE},
@@ -6495,7 +6603,7 @@ async def _fetch_peek_meta(
         payloads (all empty/``None`` on any miss).
     """
     try:
-        snap = await server_client.get(f"/v1/sessions/{target_id}", timeout=30.0)
+        snap = await server_client.get(f"{_session_url(target_id)}", timeout=30.0)
     except Exception:  # noqa: BLE001
         return _PeekMeta(agent=None, title=None, pending_elicitations=[])
     if snap.status_code != 200:
@@ -6993,7 +7101,7 @@ async def dispatch_tool_locally(
     for attempt in range(2):
         try:
             resp = await harness_client.post(
-                f"/v1/sessions/{conversation_id}/events",
+                f"{_session_url(conversation_id)}/events",
                 json={"type": "tool_result", "call_id": call_id, "output": output},
                 timeout=30.0,
             )
@@ -7348,18 +7456,18 @@ async def _execute_rest_tool(
             if conversation_id is not None:
                 try:
                     parent_resp = await server_client.get(
-                        f"/v1/sessions/{conversation_id}",
+                        f"{_session_url(conversation_id)}",
                         timeout=10.0,
                     )
                     if parent_resp.status_code == 200:
                         parent_runner = parent_resp.json().get("runner_id")
                         if parent_runner:
                             await server_client.patch(
-                                f"/v1/sessions/{session_id}",
+                                f"{_session_url(session_id)}",
                                 json={"runner_id": parent_runner},
                                 timeout=10.0,
                             )
-                except httpx.HTTPError:
+                except (httpx.HTTPError, ValueError):
                     _logger.debug(
                         "sys_call_async: failed to bind runner for child session %s",
                         session_id,
@@ -7378,7 +7486,7 @@ async def _execute_rest_tool(
                 },
             }
             event_resp = await server_client.post(
-                f"/v1/sessions/{session_id}/events",
+                f"{_session_url(session_id)}/events",
                 json=event_body,
                 timeout=30.0,
             )
@@ -7403,7 +7511,7 @@ async def _execute_rest_tool(
         handle_id = args.get("handle_id") or args.get("task_id", "")
         try:
             resp = await server_client.post(
-                f"/v1/sessions/{handle_id}/events",
+                f"{_session_url(handle_id)}/events",
                 json={"type": "interrupt", "data": {}},
                 timeout=30.0,
             )
@@ -7450,7 +7558,7 @@ async def _execute_file_tool(
         return f"Error: {tool_name} requires server access"
     if conversation_id is None:
         return f"Error: {tool_name} requires a session id"
-    files_path = f"/v1/sessions/{conversation_id}/resources/files"
+    files_path = f"{_session_url(conversation_id)}/resources/files"
 
     if tool_name == UploadFileTool.name():
         path = args.get("path")
@@ -7490,7 +7598,7 @@ async def _execute_file_tool(
         file_id = args.get("file_id", "")
         try:
             resp = await server_client.get(
-                f"{files_path}/{file_id}/content",
+                f"{files_path}/{_route_identifier(file_id, 'File')}/content",
                 timeout=30.0,
             )
             if resp.status_code == 200:
@@ -8074,11 +8182,11 @@ async def _post_subagent_policy_verdict(
     """
     try:
         resp = await server_client.post(
-            f"/v1/sessions/{conversation_id}/policies/evaluate",
+            f"{_session_url(conversation_id)}/policies/evaluate",
             json=_subagent_tool_result_policy_request(payload, output),
             timeout=30.0,
         )
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):
         _logger.exception(
             "Sub-agent inbox TOOL_RESULT policy evaluation failed for parent=%s child=%s",
             conversation_id,
@@ -8326,7 +8434,7 @@ async def _evaluate_async_tool_call_policy(
         except (json.JSONDecodeError, ValueError):
             arguments_dict = {}
         resp = await server_client.post(
-            f"/v1/sessions/{conversation_id}/policies/evaluate",
+            f"{_session_url(conversation_id)}/policies/evaluate",
             json={
                 "event": {"type": phase, "data": {"name": tool_name, "arguments": arguments_dict}}
             },
@@ -8737,11 +8845,11 @@ async def _post_session_stop(
     """
     try:
         resp = await server_client.post(
-            f"/v1/sessions/{task_id}/events",
+            f"{_session_url(task_id)}/events",
             json={"type": "stop_session", "data": {}},
             timeout=30.0,
         )
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         return None, f"Error: sys_cancel_task stop_session failed: {type(exc).__name__}: {exc}"
     if resp.status_code >= 400:
         return resp.status_code, (
@@ -8768,8 +8876,8 @@ async def _cancel_evicted_native_subagent(
     if server_client is None:
         return "Error: sys_cancel_task requires server access for sub-agent tasks"
     try:
-        resp = await server_client.get(f"/v1/sessions/{task_id}", timeout=10.0)
-    except httpx.HTTPError as exc:
+        resp = await server_client.get(f"{_session_url(task_id)}", timeout=10.0)
+    except (httpx.HTTPError, ValueError) as exc:
         return f"Error: sys_cancel_task lookup failed: {type(exc).__name__}: {exc}"
     if resp.status_code != 200:
         return f"Error: no in-flight task with task_id {task_id}"
@@ -8866,12 +8974,12 @@ async def _cancel_subagent_task(
 
     try:
         resp = await server_client.post(
-            f"/v1/sessions/{task_id}/events",
+            f"{_session_url(task_id)}/events",
             # Bare control events 422 on servers that require body.data.
             json={"type": event_type, "data": {}},
             timeout=30.0,
         )
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         return f"Error: sys_cancel_task {event_type} failed: {type(exc).__name__}: {exc}"
     if resp.status_code >= 400:
         if capability == "stop" and resp.status_code == 503:

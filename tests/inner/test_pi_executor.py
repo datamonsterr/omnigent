@@ -350,6 +350,7 @@ def test_sanitize_real_sys_session_send_args_collapses_to_object() -> None:
         "purpose",
         "model",
         "reasoning_effort",
+        "account",
         "file_ids",
         "cost_budget",
     }
@@ -4088,6 +4089,18 @@ def test_models_json_lists_only_live_gateway_models() -> None:
     assert [m["id"] for m in providers["databricks-mlflow"]["models"]] == [
         "system.ai.llama-catalog"
     ]
+
+
+def test_models_json_attributes_only_unity_gateway_providers() -> None:
+    """Providers on ``/ai-gateway/`` paths name Pi and Omnigent; serving endpoints don't."""
+    providers = _build_models_json("https://dbc-1.cloud.databricks.com", "tok")["providers"]
+
+    attributed = {name for name, provider in providers.items() if "headers" in provider}
+    assert attributed == {"databricks-openai", "databricks-mlflow"}
+    assert providers["databricks-openai"]["headers"] == {
+        "Databricks-Custom-Coding-Agent": "pi",
+        "Databricks-Custom-Client-Surfaces": "omnigent",
+    }
 
 
 def test_models_json_unknown_gpt_metadata_fails_toward_responses() -> None:
