@@ -57,6 +57,15 @@ dependency).
 - A sub-agent that returns a dark or failing result: don't re-prompt it in a
   loop — re-dispatch a fresh implementation sub-agent in a clean worktree, or
   escalate to the user.
+- A sub-agent that fails because its VENDOR is exhausted (a quota / usage-limit
+  refusal in the failure text, e.g. "⚠ Individual quota reached. Please upgrade
+  your subscription to increase your limits. Resets in 59h34m38s.") is terminal
+  for that vendor, not a dark result: collect the failure, drop that vendor from
+  the roster for the rest of the run, and re-dispatch the task to an AVAILABLE
+  worker from a DIFFERENT vendor (the `opencode` worker is the fallback — it
+  lists the OpenCode CLI's own catalog, including its free models). If the task
+  itself mandates a specific vendor, do not substitute another one: report that
+  the mandated vendor is exhausted and ask the human.
 - Because polly never merges, cross-PR conflicts surface when the human merges,
   not here. Keeping each parallel task's file scope disjoint is what keeps that
   rare — honor it.

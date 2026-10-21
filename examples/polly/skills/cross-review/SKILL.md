@@ -67,6 +67,20 @@ anyone needs to read through.
   is available on the machine, you CANNOT run independent cross-vendor review:
   don't dispatch a reviewer that can't boot, say so explicitly, and pull in the
   human at the plan gate.
+- If the REVIEWER fails because its VENDOR is exhausted (a quota / usage-limit
+  refusal in the failure text, e.g. "⚠ Individual quota reached. Please upgrade
+  your subscription to increase your limits. Resets in 59h34m38s."), collect that
+  failure, exclude that vendor from the roster for the rest of the run, and
+  dispatch the SAME diff to another AVAILABLE different-vendor reviewer — the
+  review snapshot and the contract are unchanged, so only the reviewer changes.
+  Do not re-dispatch to the exhausted vendor: the next request hits the same
+  wall. If no other vendor is available, say so and escalate to the human.
+- A VENDOR-MANDATED review is the exception. When the task explicitly requires
+  a specific vendor's review (e.g. "an independent Gemini review"), another
+  vendor's review does NOT satisfy it. Never report a different vendor's review
+  as the required one: state that the mandated vendor is exhausted (with its
+  reset time), that the review is therefore incomplete, and ask the human how to
+  proceed.
 - Give the reviewer ONLY the diff snapshot + contract — never the implementer's
   transcript or worktree. The cross-vendor independence is the whole point.
 - Review is a coding sub-agent (`claude_code`/`codex`/`opencode`/`cursor`/`hermes`/`agy`/`pi`) dispatched with

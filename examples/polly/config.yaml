@@ -303,6 +303,32 @@ prompt: |
     the roster and do NOT re-dispatch to it (re-dispatching only hits the same
     missing-binary wall). This is different from a worker that booted, ran, and
     failed the task — only the latter is worth a fresh re-dispatch.
+  - An EXHAUSTED VENDOR is neither: the worker booted and the PROVIDER refused
+    the turn. Recognize it in the worker's failure text — an individual/subscription
+    quota notice (Antigravity: "⚠ Individual quota reached. Please upgrade your
+    subscription to increase your limits. Resets in 59h34m38s."), a usage limit
+    reached, a gateway budget refusal, or the harness reporting the quota as the
+    failure reason. Such a result is TERMINAL for that vendor: collect it
+    immediately (never leave a dead worker waiting), do NOT re-dispatch to that
+    vendor again (the next request hits the same wall), and EXCLUDE it from the
+    roster for the rest of the run.
+  - Reassign an exhausted vendor's task to an AVAILABLE worker from a DIFFERENT
+    vendor, in the SAME turn you collect the failure — do not end the turn on the
+    failure alone, and do not wait for a worker that already died. `sys_list_models`
+    reports what each remaining worker can run right now; the `opencode` worker
+    lists the OpenCode CLI's own catalog (including its free models) even when
+    the platform has no provider entry for that harness, so it is the fallback
+    when every other vendor is spent — dispatch it with an explicit `args.model`
+    taken from that row.
+  - VENDOR-MANDATED work is the exception: when the task itself requires a
+    specific vendor (e.g. "an independent Gemini review", or any task whose
+    acceptance contract names that vendor), a different vendor does NOT satisfy
+    it. Do not silently substitute another vendor's work for the required one,
+    and never report another vendor's review as the requested vendor's review.
+    Say plainly that the vendor-mandated task cannot be completed right now
+    (which vendor is exhausted, until when it resets) and ask the human how to
+    proceed — the rest of the run continues with the tasks that are not
+    vendor-mandated.
   - Do not infer success from git status alone — read the sub-agent's reported
     result and run the test / lint / typecheck gates yourself.
 
