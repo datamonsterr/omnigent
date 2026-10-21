@@ -175,6 +175,8 @@ describe("ComposerAddMenu", () => {
 });
 
 // Keep transport helpers real; each test controls the resolved user and create POST.
+// No account pools: the pool read would otherwise consume the create-request mocks.
+vi.mock("@/hooks/useAccountPools", () => ({ useAccountPools: () => ({ data: [] }) }));
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
   authenticatedFetch: vi.fn(),
@@ -1828,30 +1830,42 @@ describe("NewChatLandingScreen initial picker loading", () => {
   });
 
   it.each([
-    { harness: "cursor-native", label: "Cursor" },
-    { harness: "opencode-native", label: "OpenCode" },
-  ])("does not request unrelated model catalogs for $label", ({ harness, label }) => {
-    mockAgents([
-      {
-        id: "a_no_models",
-        name: `${harness}-ui`,
-        display_name: label,
-        description: null,
-        harness,
-        skills: [],
-      },
-    ]);
-    mockModelQueries(() => pendingModels);
-    renderLanding();
-
-    expect(expectReadyPicker()).toHaveAccessibleName(new RegExp(label));
-    expect(useHostModelOptionsMock).toHaveBeenCalledWith(
-      "host_1",
-      "claude-native",
-      false,
-      expect.any(Object),
-    );
-  });
+    { harness: "cursor-native", label: "Cursor", requestsModels: false },
+    { harness: "opencode-native", label: "OpenCode", requestsModels: true },
+  ])(
+    "requests only the relevant model catalog for $label",
+    ({ harness, label, requestsModels }) => {
+      mockAgents([
+        {
+          id: "a_no_models",
+          name: `${harness}-ui`,
+          display_name: label,
+          description: null,
+          harness,
+          skills: [],
+        },
+      ]);
+      mockModelQueries(() => pendingModels);
+      renderLanding();
+      if (requestsModels) {
+        expectLoading();
+        expect(useHostModelOptionsMock).toHaveBeenCalledWith(
+          "host_1",
+          harness,
+          true,
+          expect.any(Object),
+        );
+      } else {
+        expect(expectReadyPicker()).toHaveAccessibleName(new RegExp(label));
+        expect(useHostModelOptionsMock).toHaveBeenCalledWith(
+          "host_1",
+          "claude-native",
+          false,
+          expect.any(Object),
+        );
+      }
+    },
+  );
 
   it("waits for project config, pinned agents, and the configured host's model before showing its defaults", () => {
     localStorage.setItem(LAST_AGENT_KEY, "a2");
@@ -4648,7 +4662,7 @@ describe("NewChatLandingScreen", () => {
         fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
       }
 
-      if (["claude", "codex", "pi", "devin"].includes(native.key)) {
+      if (["claude", "codex", "pi", "devin", "opencode", "antigravity"].includes(native.key)) {
         fireEvent.click(screen.getByTestId(`new-chat-landing-agent-config-${agentId}`));
         expect(screen.getByTestId("new-chat-landing-agent-models")).toBeVisible();
         expect(screen.getByTestId("new-chat-landing-agent-efforts")).toBeVisible();
