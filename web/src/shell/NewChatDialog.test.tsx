@@ -21,8 +21,11 @@ import { useConversations as useTestConversations } from "@/hooks/useConversatio
 
 vi.mock("@/hooks/useSidebarData", () => ({ useLoadedConversations: () => useTestConversations() }));
 import { useSkills } from "@/hooks/useSkills";
+import { useAccountPools } from "@/hooks/useAccountPools";
 
 vi.mock("@/hooks/useSkills", () => ({ useSkills: vi.fn() }));
+// Account fetching has its own component tests; keep create-request assertions isolated.
+vi.mock("@/hooks/useAccountPools", () => ({ useAccountPools: vi.fn() }));
 import type * as IdentityModule from "@/lib/identity";
 import type * as UseConversationsModule from "@/hooks/useConversations";
 import type * as UseSkillsModule from "@/hooks/useSkills";
@@ -1179,6 +1182,12 @@ function mockModelQueries(
 // directory-session / runner-health / filesystem stubs, and a persisted
 // recent workspace so the working-directory field seeds to a known path.
 function setupLandingMocks() {
+  vi.mocked(useAccountPools).mockReturnValue({
+    data: [],
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  } as unknown as ReturnType<typeof useAccountPools>);
   authenticatedFetchMock.mockReset();
   getCurrentUserIdMock.mockReset();
   getCurrentUserIdMock.mockReturnValue(null);

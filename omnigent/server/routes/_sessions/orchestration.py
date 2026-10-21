@@ -11774,6 +11774,8 @@ async def _create_session_from_existing_agent(
     if spec_for_env is not None and not explicit_account:
         exec_cfg = getattr(spec_for_env.executor, "config", None)
         if isinstance(exec_cfg, dict):
+            if isinstance(exec_cfg.get("account_id"), str) and exec_cfg["account_id"]:
+                initial_labels[ACCOUNT_ID_LABEL_KEY] = exec_cfg["account_id"]
             if "codex_home" in exec_cfg and "omnigent.codex.codex_home" not in initial_labels:
                 initial_labels["omnigent.codex.codex_home"] = str(exec_cfg["codex_home"])
             if (
@@ -12220,6 +12222,19 @@ def _create_session_from_bundle(
 
     if _spec_harness(spec) == "acp" and not configured_snapshot(inference_snapshot):
         _validate_acp_spec_models(spec)
+
+    from omnigent.account_pools.labels import ACCOUNT_ID_LABEL_KEY, LEGACY_ACCOUNT_ID_LABEL_KEY
+
+    labels = dict(metadata.labels or {})
+    configured_account = spec.executor.config.get("account_id")
+    if (
+        isinstance(configured_account, str)
+        and configured_account
+        and not labels.get(ACCOUNT_ID_LABEL_KEY)
+        and not labels.get(LEGACY_ACCOUNT_ID_LABEL_KEY)
+    ):
+        labels[ACCOUNT_ID_LABEL_KEY] = configured_account
+        metadata = metadata.model_copy(update={"labels": labels})
 
     if metadata.reasoning_effort is None and spec.executor.reasoning_effort is not None:
         _, seeded_effort = validate_session_model_metadata(

@@ -3131,8 +3131,12 @@ export function NewChatLandingScreen() {
   useEffect(() => {
     if (pickedAccountHarness === selectedNativeHarness) return;
     setPickedAccountHarness(selectedNativeHarness);
-    setPickedAccountId(readLastAccount(selectedNativeHarness));
-  }, [selectedNativeHarness, pickedAccountHarness]);
+    setPickedAccountId(
+      effectiveAgentId === PENDING_AGENT_ID
+        ? (pendingAgent?.accountId ?? null)
+        : readLastAccount(selectedNativeHarness),
+    );
+  }, [selectedNativeHarness, pickedAccountHarness, effectiveAgentId, pendingAgent]);
   const selectAccount = useCallback(
     (accountId: string | null) => {
       setPickedAccountId(accountId);
@@ -7619,6 +7623,8 @@ export function NewChatLandingScreen() {
         onOpenChange={setCreateAgentOpen}
         onCreate={(input) => {
           setPendingAgent(input);
+          setPickedAccountId(input.accountId ?? null);
+          setPickedAccountHarness(input.harness);
           handleSelectPending();
         }}
         onImport={

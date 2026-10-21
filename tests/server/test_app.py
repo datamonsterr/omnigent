@@ -2714,3 +2714,39 @@ async def test_on_runner_connect_reassign_http_status_levels(
     assert row.levelno == level
     assert row.exc_info is None
     assert f"HTTP {status}: runner said no" in row.getMessage()
+
+
+@pytest.mark.asyncio
+async def test_info_exposes_deployment_picker_exclusions(client, monkeypatch) -> None:
+    """Exact ID exclusions affect discovery without deleting registry entries."""
+    monkeypatch.setenv("OMNIGENT_AGENT_PICKER_EXCLUDE_IDS", " ag_retired, ag_other,ag_retired, ")
+    response = await client.get("/v1/info")
+    assert response.status_code == 200
+    assert response.json()["agent_picker_exclude_ids"] == ["ag_other", "ag_retired"]
+
+
+@pytest.mark.asyncio
+async def test_server_config_activates_codex_quota_first(db_uri, tmp_path, runtime_init) -> None:
+    """The deployed config activates the manager policy and advertises it to clients."""
+    from omnigent.stores.account_pool_store.sqlalchemy_store import SqlAlchemyAccountPoolStore
+    from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
+
+    artifacts = LocalArtifactStore(str(tmp_path / "quota-policy-artifacts"))
+    app = server_app.create_app(
+        agent_store=SqlAlchemyAgentStore(db_uri),
+        file_store=SqlAlchemyFileStore(db_uri),
+        conversation_store=SqlAlchemyConversationStore(db_uri),
+        artifact_store=artifacts,
+        agent_cache=AgentCache(
+            artifact_store=artifacts, cache_dir=tmp_path / "quota-policy-cache"
+        ),
+        account_pool_store=SqlAlchemyAccountPoolStore(db_uri),
+        server_config={"codex_account_selection_policy": "quota_first"},
+    )
+    assert app.state.account_pool_manager.codex_selection_policy == "quota_first"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        assert (await client.get("/v1/info")).json()[
+            "codex_account_selection_policy"
+        ] == "quota_first"

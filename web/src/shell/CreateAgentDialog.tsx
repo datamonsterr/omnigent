@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { BRAIN_HARNESS_LABELS, useBrainHarnessLabels } from "@/lib/agentLabels";
+import { AccountSelect } from "@/components/composer/AccountSelect";
 import type { AgentBundleInput, MCPServerInput } from "@/lib/agentBundle";
 
 /**
@@ -301,6 +302,7 @@ function useAgentFormFields() {
   const [instructions, setInstructions] = useState("");
   const [harness, setHarness] = useState(DEFAULT_HARNESS);
   const [model, setModel] = useState("");
+  const [accountId, setAccountId] = useState<string | null>(null);
   const [mcpEntries, setMcpEntries] = useState<MCPFormEntry[]>([]);
   const [nextKey, setNextKey] = useState(0);
 
@@ -310,6 +312,7 @@ function useAgentFormFields() {
     setInstructions("");
     setHarness(DEFAULT_HARNESS);
     setModel("");
+    setAccountId(null);
     setMcpEntries([]);
     setNextKey(0);
   }
@@ -336,6 +339,7 @@ function useAgentFormFields() {
       description: description.trim() || undefined,
       instructions: instructions.trim() || undefined,
       harness,
+      accountId,
       model: model.trim(),
       mcpServers: toMCPInputs(mcpEntries),
     };
@@ -349,7 +353,12 @@ function useAgentFormFields() {
     instructions,
     setInstructions,
     harness,
-    setHarness,
+    setHarness: (next: string) => {
+      setHarness(next);
+      setAccountId(null);
+    },
+    accountId,
+    setAccountId,
     harnessOptions,
     model,
     setModel,
@@ -373,6 +382,8 @@ function AgentFormFields({
   setInstructions,
   harness,
   setHarness,
+  accountId,
+  setAccountId,
   harnessOptions,
   model,
   setModel,
@@ -450,6 +461,14 @@ function AgentFormFields({
           </SelectContent>
         </Select>
       </div>
+
+      <AccountSelect
+        harness={harness}
+        value={accountId}
+        onChange={setAccountId}
+        testId="create-agent-account"
+        label="Account"
+      />
 
       {/* Model */}
       <div className="flex flex-col gap-1.5">

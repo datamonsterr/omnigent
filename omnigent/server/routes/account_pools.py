@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,18 @@ _USAGE_SCAN_LIMIT = 2000
 
 #: Usage periods the API accepts, in days. ``0`` means today.
 _USAGE_PERIOD_DAYS = (0, 7, 30)
+
+
+def _usage_since(days: int) -> int:
+    """Return the usage boundary; Today starts at midnight UTC."""
+    now = time.time()
+    if days:
+        return int(now) - days * 86400
+    return int(
+        datetime.fromtimestamp(now, UTC)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .timestamp()
+    )
 
 
 class CreateAccountPoolRequest(BaseModel):
@@ -313,7 +326,7 @@ def create_account_pools_router(
         """
         require_user(request, auth_provider)
         days = period_days if period_days in _USAGE_PERIOD_DAYS else 30
-        since = int(time.time()) - days * 86400 if days else int(time.time())
+        since = _usage_since(days)
         pools = await asyncio.to_thread(account_pool_store.list_pools)
         usage = await asyncio.to_thread(_usage_by_account, since)
         quotas = await asyncio.to_thread(account_pool_store.list_quota_snapshots)
@@ -457,7 +470,7 @@ def create_account_pools_router(
         """
         require_user(request, auth_provider)
         days = period_days if period_days in _USAGE_PERIOD_DAYS else 30
-        since = int(time.time()) - days * 86400 if days else int(time.time())
+        since = _usage_since(days)
         pools = await asyncio.to_thread(account_pool_store.list_pools)
         usage = await asyncio.to_thread(_usage_by_account, since)
         quotas = await asyncio.to_thread(account_pool_store.list_quota_snapshots)
