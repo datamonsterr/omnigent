@@ -38,6 +38,7 @@ import httpx
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from omnigent.account_pools.labels import CODEX_HOME_LABEL_KEY
 from omnigent.acp_cli_harnesses import ACP_CLI_HARNESSES
 from omnigent.debug_logging import (
     debug_event,
@@ -515,6 +516,9 @@ class _SessionSnapshot:
         ``"cursor-native-ui"``. Used as the sub-agent label when rebuilding a
         work entry for a child the server did not record a ``sub_agent_name``
         for. ``None`` when unbound / the fetch failed.
+    :param codex_home: The session's account Codex home from its labels,
+        e.g. ``"/home/user/.codex-acc2"``. The SDK ``codex`` harness reads
+        auth and config from it. ``None`` uses the runner's own home.
     """
 
     ok: bool
@@ -525,6 +529,21 @@ class _SessionSnapshot:
     sub_agent_name: str | None = None
     parent_session_id: str | None = None
     agent_name: str | None = None
+    codex_home: str | None = None
+
+
+def _codex_home_from_labels(labels: object) -> str | None:
+    """Return the session's account Codex home from its labels, if any.
+
+    Reads the same keys as the native Codex launch config.
+
+    :param labels: The session's label mapping, or anything else.
+    :returns: The Codex home path, or ``None`` when unset.
+    """
+    if not isinstance(labels, Mapping):
+        return None
+    value = labels.get(CODEX_HOME_LABEL_KEY) or labels.get("codex_home")
+    return value if isinstance(value, str) and value else None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1990,6 +2009,7 @@ def create_runner_app(
             sub_agent_name: str | None = None
             parent_session_id: str | None = None
             agent_name: str | None = None
+            codex_home: str | None = None
             try:
                 resp = await server_client.get(
                     f"/v1/sessions/{session_id}", params=_SESSION_METADATA_PARAMS
@@ -2013,6 +2033,7 @@ def create_runner_app(
                     raw_agent_name = body.get("agent_name")
                     if isinstance(raw_agent_name, str) and raw_agent_name:
                         agent_name = raw_agent_name
+                    codex_home = _codex_home_from_labels(body.get("labels"))
             except Exception:  # noqa: BLE001 — best-effort; created_at falls back to wall time
                 pass
             snapshot = _SessionSnapshot(
@@ -2024,6 +2045,7 @@ def create_runner_app(
                 sub_agent_name=sub_agent_name,
                 parent_session_id=parent_session_id,
                 agent_name=agent_name,
+                codex_home=codex_home,
             )
             if snapshot.ok and snapshot.agent_id is not None:
                 if _session_cache_generation_is_current(session_id, generation):
@@ -2076,6 +2098,9 @@ def create_runner_app(
             )
         return None
 
+    async def _session_codex_home(session_id: str) -> str | None:
+        return (await _session_snapshot(session_id)).codex_home
+
     async def _session_runtime_cwd(session_id: str) -> Path | None:
         workspace = await _session_workspace_value(session_id)
         if workspace and workspace.strip():
@@ -2109,6 +2134,7 @@ def create_runner_app(
             agent_id=agent_id,
             sub_agent_name=envelope.sub_agent_name,
             parent_session_id=snapshot.parent_session_id,
+            codex_home=_codex_home_from_labels(snapshot.labels),
         )
         _session_start_cache[session_id] = float(snapshot.created_at)
         _session_workspace_cache[session_id] = snapshot.workspace
@@ -2279,6 +2305,7 @@ def create_runner_app(
                 harness_override=body.harness_override,
                 sub_agent_name=sub_agent_name,
                 cwd=resolver_cwd,
+                codex_home=await _session_codex_home(conversation_id),
             )
             generator_spec = generator_spec_for_harness(effective_harness)
             if generator_spec is None:
@@ -2294,6 +2321,7 @@ def create_runner_app(
                     harness_override=resolver_harness,
                     sub_agent_name=sub_agent_name,
                     cwd=resolver_cwd,
+                    codex_home=await _session_codex_home(conversation_id),
                 )
                 if resolved_harness != resolver_harness:
                     return BackgroundSessionTitleResponse(status="unsupported")
@@ -2565,6 +2593,7 @@ def create_runner_app(
                     session_id=session_id,
                     model_override=_model_override,
                     resource_registry=resource_registry,
+                    codex_home=await _session_codex_home(session_id),
                 )
             except OmnigentError as exc:
                 # The relay also needs the failure when init precedes the first turn.
@@ -5043,6 +5072,7 @@ def create_runner_app(
                 model_override=cast(str | None, msg_body.get("model_override")),
                 session_id=conv,
                 resource_registry=resource_registry,
+                codex_home=await _session_codex_home(conv),
             )
             # Gated harnesses use nullable to avoid the fallback literal.
             _authored_bg = raw_author_instructions(cached_spec) is not None
@@ -5443,6 +5473,7 @@ def create_runner_app(
                     ),
                     sub_agent_name=_sub_agent_name,
                     cwd=await _session_runtime_cwd(conv_id),
+                    codex_home=await _session_codex_home(conv_id),
                 )
             except SessionAgentMissingError:
                 return JSONResponse(
@@ -7900,6 +7931,7 @@ async def _resolve_harness_config(
     sub_agent_name: str | None = None,
     cwd: Path | None = None,
     resource_registry: SessionResourceRegistry | None = None,
+    codex_home: str | None = None,
 ) -> tuple[str, dict[str, str] | None]:
     """Resolve harness type + spawn-env from the agent spec.
 
@@ -7922,6 +7954,8 @@ async def _resolve_harness_config(
         so the spawn-env advertises the child's bundle rather than the
         parent's. ``None`` for top-level sessions.
     :param cwd: Runtime working directory for harnesses that need it.
+    :param codex_home: The session's account Codex home for the SDK
+        ``codex`` harness, or ``None``.
     :returns: ``(harness, spawn_env)`` derived from the resolved spec.
     :raises RuntimeError: When a spec_resolver is configured but the spec
         cannot be resolved. Callers catch this to surface a clean error
@@ -7961,6 +7995,7 @@ async def _resolve_harness_config(
                 model_override=model_override,
                 session_id=session_id,
                 resource_registry=resource_registry,
+                codex_home=codex_home,
             )
             return harness, spawn_env
 
@@ -8079,6 +8114,7 @@ def _build_spawn_env_from_spec(
     model_override: str | None = None,
     session_id: str | None = None,
     resource_registry: SessionResourceRegistry | None = None,
+    codex_home: str | None = None,
 ) -> dict[str, str] | None:
     """Build spawn-env from spec — mirrors workflow.py's helpers.
 
@@ -8096,6 +8132,9 @@ def _build_spawn_env_from_spec(
         via ``--model`` in :func:`_build_claude_native_base_args`; the
         SDK harnesses have no such arg, so the override must land in the
         env var here.)
+    :param codex_home: The session's account Codex home. The SDK ``codex``
+        harness reads auth and config from it instead of the runner's own
+        ``CODEX_HOME``. ``None`` keeps the runner's home.
     :returns: The spawn-env dict, or ``None`` for native / unknown harnesses.
     """
     # Namespaced generic-ACP ids (``acp:<slug>``) canonicalize to ``acp`` so the
@@ -8187,6 +8226,8 @@ def _build_spawn_env_from_spec(
                 if resource_registry is not None and session_id is not None
                 else ""
             )
+            if codex_home:
+                env["CODEX_HOME"] = str(Path(codex_home).expanduser())
         elif harness == "pi":
             env = _build_pi_spawn_env(effective_spec, cwd=cwd, workdir=workdir)
         elif harness == "openai-agents":

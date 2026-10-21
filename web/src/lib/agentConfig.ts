@@ -26,6 +26,8 @@ export interface AgentConfigDraft {
   instructions: string;
   model: string;
   harness: string;
+  /** Default account id, or `null` for the server's automatic pick. */
+  accountId: string | null;
   servers: MCPDraft[];
 }
 
@@ -35,6 +37,7 @@ export function agentConfigDraft(config: AgentConfig): AgentConfigDraft {
     instructions: config.instructions ?? "",
     model: config.model ?? "",
     harness: config.harness ?? "",
+    accountId: config.account_id ?? null,
     servers: Object.entries(config.mcp_servers).map(([name, server]) => ({
       key: name,
       name,
@@ -72,6 +75,7 @@ export function agentConfigPatch(config: AgentConfig, draft: AgentConfigDraft): 
       patch[field] = draft[field];
     }
   }
+  if (draft.accountId !== (config.account_id ?? null)) patch.account_id = draft.accountId;
   const names = new Set<string>();
   const changes: [string, MCPConfigPatch | null][] = [];
   for (const row of draft.servers) {

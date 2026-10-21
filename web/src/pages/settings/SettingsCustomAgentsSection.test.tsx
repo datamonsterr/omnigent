@@ -7,6 +7,8 @@ import { authenticatedFetch } from "@/lib/identity";
 import { buildAgentBundle } from "@/lib/agentBundle";
 import type { AgentConfig } from "@/lib/agentsApi";
 import type { ManagedAgent } from "@/hooks/useCustomAgents";
+import type { AccountPool } from "@/lib/accountPoolsApi";
+import { testAccountPool } from "@/test/accountPoolFixtures";
 
 const flags = vi.hoisted(() => ({
   feature: true,
@@ -59,6 +61,7 @@ let users: ManagedAgent[];
 let failSave: boolean;
 let failDelete: boolean;
 let inUse: boolean;
+let accountPools: AccountPool[];
 
 function mount(path = "/settings/custom-agents") {
   const client = new QueryClient({
@@ -81,6 +84,7 @@ beforeEach(() => {
   failSave = false;
   failDelete = false;
   inUse = false;
+  accountPools = [];
   users = [agent("a1", "research"), agent("a2", "research")];
   vi.mocked(buildAgentBundle)
     .mockReset()
@@ -88,6 +92,7 @@ beforeEach(() => {
   vi.mocked(authenticatedFetch).mockReset();
   vi.mocked(authenticatedFetch).mockImplementation(async (input, init) => {
     const url = new URL(String(input), "http://localhost");
+    if (url.pathname === "/v1/account-pools") return response({ data: accountPools });
     if (init?.method === "POST") {
       if (failSave)
         return response({ error: { message: "Invalid bundle", code: "invalid_input" } }, 400);
@@ -155,6 +160,7 @@ describe("Custom agents settings", () => {
     expect(vi.mocked(authenticatedFetch).mock.calls.map(([url]) => url)).toEqual([
       "/v1/agents/a1",
       "/v1/agents/a1/config",
+      "/v1/account-pools?period_days=30",
     ]);
   });
 
@@ -287,6 +293,31 @@ describe("Custom agents settings", () => {
     expect((writes[1][1]!.body as FormData).get("bundle")).toBeInstanceOf(File);
   });
 
+  it("saves the picked default account into the new agent's bundle", async () => {
+    accountPools = [testAccountPool("claude-sdk", ["claude-acc1", "claude-acc2"])];
+    mount("/settings/custom-agents/new");
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: "new-agent" } });
+    fireEvent.change(screen.getByLabelText(/Model/), { target: { value: "test-model" } });
+    const account = await screen.findByTestId("create-agent-account");
+    expect(account).toHaveTextContent("Auto");
+    fireEvent.keyDown(account, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: /claude-acc2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save agent" }));
+    expect(await screen.findByRole("heading", { name: "new-agent" })).toBeVisible();
+    expect(buildAgentBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ harness: "claude-sdk", accountId: "claude-acc2" }),
+    );
+  });
+
+  it("hides the account field when no pool serves the harness", async () => {
+    mount("/settings/custom-agents/new");
+    await screen.findByLabelText(/Model/);
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith("/v1/account-pools?period_days=30"),
+    );
+    expect(screen.queryByTestId("create-agent-account")).toBeNull();
+  });
+
   it("requires a second explicit confirmation for an in-use agent and retains errors", async () => {
     inUse = true;
     mount("/settings/custom-agents/a1");
@@ -349,9 +380,13 @@ const editableConfig: AgentConfig = {
   mcp_servers: {},
 };
 
-function configResponses({ fail = 0, etag = true }: { fail?: number; etag?: boolean } = {}) {
+function configResponses({
+  fail = 0,
+  etag = true,
+  accountId = null,
+}: { fail?: number; etag?: boolean; accountId?: string | null } = {}) {
   const previous = vi.mocked(authenticatedFetch).getMockImplementation()!;
-  let current = { ...editableConfig };
+  let current: AgentConfig = { ...editableConfig, account_id: accountId };
   let patchStatus = fail;
   vi.mocked(authenticatedFetch).mockImplementation(async (url, init) => {
     if (init?.method === "PATCH") {
@@ -440,6 +475,35 @@ describe("editing custom agents", () => {
     );
     expect(buildAgentBundle).not.toHaveBeenCalled();
   });
+  it("changes and clears the agent's default account", async () => {
+    accountPools = [testAccountPool("claude-sdk", ["claude-acc1", "claude-acc2"])];
+    configResponses({ accountId: "claude-acc1" });
+    await openEditor();
+    const account = await screen.findByTestId("agent-config-account");
+    expect(account).toHaveTextContent("claude-acc1");
+    fireEvent.keyDown(account, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: /claude-acc2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        "/v1/agents/a1",
+        expect.objectContaining({ method: "PATCH", body: '{"account_id":"claude-acc2"}' }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled(),
+    );
+    fireEvent.keyDown(screen.getByTestId("agent-config-account"), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: /Auto/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(authenticatedFetch).toHaveBeenCalledWith(
+        "/v1/agents/a1",
+        expect.objectContaining({ method: "PATCH", body: '{"account_id":null}' }),
+      ),
+    );
+  });
+
   it("preserves new edits when the detail refresh after saving fails and is retried", async () => {
     configResponses();
     await openEditor();

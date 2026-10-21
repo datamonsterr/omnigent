@@ -66,17 +66,32 @@ idempotent.
   created, edited, enabled, disabled, and removed there.
 - **Every harness picker** (new-chat landing, scheduled task, project
   settings) offers an account for the picked harness, plus `Auto` — the
-  server's own pick.
+  server's own pick. A custom agent on the SDK `codex` harness uses the
+  `codex-native` pool.
+- **Custom agent forms** (Create custom agent, Settings › Custom agents ›
+  New, and the agent's edit page) offer a default account under Harness
+  when a pool serves it. It is stored as `executor.config.account_id` in the
+  agent bundle (the account id, never a path) and edited with
+  `PATCH /v1/agents/{id}` `{"account_id": "<id>" | null}`.
 
 ## How a session gets its account
 
 1. An explicit pin wins: the session carries `omnigent.account.id` (the
    picker, a project default, or a scheduled task's `account_id`).
-2. Otherwise the pool that serves the session's harness ranks its enabled
+2. Otherwise the agent's default account (`executor.config.account_id`)
+   pins the session. This applies to both the agent-id create and the
+   multipart bundle create.
+3. A pin to an account that is removed or disabled is dropped with a logged
+   warning, and the pool picks instead.
+4. Otherwise the pool that serves the session's harness ranks its enabled
    accounts: fewest active sessions, then known quota before unknown, then
    the most remaining five-hour and weekly quota, then the account id.
-3. Accounts with exhausted or blocked quota are skipped. A pool with no
+5. Accounts with exhausted or blocked quota are skipped. A pool with no
    eligible account fails the create — a session never runs unassigned.
+
+The runner reads the chosen home from the session labels. Both `codex-native`
+and the SDK `codex` harness bridge Codex auth and config from
+`omnigent.codex.codex_home`.
 
 ## API
 

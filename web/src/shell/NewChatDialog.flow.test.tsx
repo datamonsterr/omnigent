@@ -53,6 +53,8 @@ import type { Host } from "@/hooks/useHosts";
 import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
+import { useAccountPools } from "@/hooks/useAccountPools";
+import { testAccountPool } from "@/test/accountPoolFixtures";
 import { NewChatLandingScreen, resetLandingDraft, sanitizeInitialPrompt } from "./NewChatDialog";
 import { writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import { writeLastHostChoice } from "@/lib/hostPreferences";
@@ -143,6 +145,9 @@ vi.mock("@/hooks/useHosts", () => ({
   useInstallHarness: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useInstallingHarnesses: vi.fn(() => new Set<string>()),
 }));
+// No account pools unless a scenario serves them; the pool read would otherwise
+// consume the create-request mocks.
+vi.mock("@/hooks/useAccountPools", () => ({ useAccountPools: vi.fn() }));
 vi.mock("@/hooks/useAvailableAgents", () => ({
   useAvailableAgents: vi.fn(),
   prefetchAvailableAgentDetails: vi.fn(),
@@ -398,6 +403,9 @@ function closeAgentConfig(): void {
 }
 
 beforeEach(() => {
+  vi.mocked(useAccountPools).mockReturnValue({ data: [] } as unknown as ReturnType<
+    typeof useAccountPools
+  >);
   navigateMock.mockReset();
   setPendingInitialPromptMock.mockReset();
   beginLocalConversationMock.mockReset();
@@ -2355,6 +2363,29 @@ describe("NewChatLandingScreen create flow", () => {
     // turn, so there is no later surface to apply it.
     expect(body.harness_override).toBe("pi");
     expect(body.agent_id).toBe("ag_polly");
+  });
+
+  it("pins a custom SDK codex agent's session to the account picked from the codex pool", async () => {
+    vi.mocked(useAccountPools).mockReturnValue({
+      data: [testAccountPool("codex-native", ["codex-acc1", "codex-acc2"])],
+    } as unknown as ReturnType<typeof useAccountPools>);
+    setAgents([agent({ id: "ag_cx", name: "polly", display_name: "Polly", harness: "codex" })]);
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: "conv_cx" }),
+    } as unknown as Response);
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    openAgentConfig("ag_cx");
+    fireEvent.click(screen.getByTestId("new-chat-landing-agent-account-codex-acc2"));
+    closeAgentConfig();
+    typeMessage("go");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    await waitFor(() => expect(authenticatedFetch).toHaveBeenCalledTimes(1));
+    const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string).labels["omnigent.account.id"]).toBe("codex-acc2");
   });
 
   it("omits harness_override and shows the spec default when no harness is picked", async () => {

@@ -21,7 +21,7 @@ from omnigent.account_pools.manager import AccountPoolManager
 from omnigent.account_pools.quota import AccountQuota
 from omnigent.entities.account_pool import HOME_KIND_CODEX, HOME_KIND_GEMINI
 from omnigent.stores.account_pool_store.sqlalchemy_store import SqlAlchemyAccountPoolStore
-from tests.server.helpers import create_test_agent
+from tests.server.helpers import create_test_agent, create_test_session
 
 
 @pytest.fixture
@@ -295,3 +295,80 @@ async def test_session_create_new_main_spec_resolution_regression(
     )
     assert resp_pinned.status_code == 201, resp_pinned.text
     assert resp_pinned.json()["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-2"
+
+
+def _codex_agent_executor(account_id: str) -> dict[str, object]:
+    """Build a custom Codex agent's executor block with a default account.
+
+    :param account_id: The agent's default account id.
+    :returns: The executor block.
+    """
+    return {"type": "omnigent", "config": {"harness": "codex", "account_id": account_id}}
+
+
+@pytest.mark.asyncio
+async def test_agent_default_account_seeds_existing_agent_sessions(
+    client: AsyncClient,
+    account_pool_store: SqlAlchemyAccountPoolStore,
+) -> None:
+    """An agent's default account pins its sessions unless the session picks one."""
+    _install_manager(client, account_pool_store)
+    agent = await create_test_agent(
+        client, name="codex-pinned-agent", executor=_codex_agent_executor("codex-2")
+    )
+
+    default = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
+    assert default.status_code == 201, default.text
+    labels = default.json()["labels"]
+    assert labels[ACCOUNT_ID_LABEL_KEY] == "codex-2"
+    assert labels[CODEX_HOME_LABEL_KEY] == str(Path("/var/accounts/codex-2").resolve())
+
+    chosen = await client.post(
+        "/v1/sessions",
+        json={"agent_id": agent["id"], "labels": {ACCOUNT_ID_LABEL_KEY: "codex-1"}},
+    )
+    assert chosen.status_code == 201, chosen.text
+    assert chosen.json()["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-1"
+    assert chosen.json()["labels"][CODEX_HOME_LABEL_KEY] == str(
+        Path("/var/accounts/codex-1").resolve()
+    )
+
+
+@pytest.mark.asyncio
+async def test_bundle_create_assigns_agent_default_or_session_account(
+    client: AsyncClient,
+    account_pool_store: SqlAlchemyAccountPoolStore,
+) -> None:
+    """The multipart bundle create assigns the account like the agent-id path."""
+    _install_manager(client, account_pool_store)
+
+    default = await create_test_session(
+        client, name="bundle-default", executor=_codex_agent_executor("codex-2")
+    )
+    assert default["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-2"
+    assert default["labels"][ACCOUNT_POOL_LABEL_KEY] == "codex"
+    assert default["labels"][CODEX_HOME_LABEL_KEY] == str(Path("/var/accounts/codex-2").resolve())
+
+    chosen = await create_test_session(
+        client,
+        name="bundle-chosen",
+        executor=_codex_agent_executor("codex-2"),
+        labels={ACCOUNT_ID_LABEL_KEY: "codex-1"},
+    )
+    assert chosen["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-1"
+    assert chosen["labels"][CODEX_HOME_LABEL_KEY] == str(Path("/var/accounts/codex-1").resolve())
+
+
+@pytest.mark.asyncio
+async def test_stale_agent_default_account_falls_back_to_pool_pick(
+    client: AsyncClient,
+    account_pool_store: SqlAlchemyAccountPoolStore,
+) -> None:
+    """A removed default account still launches the session with a pool account home."""
+    _install_manager(client, account_pool_store)
+
+    session = await create_test_session(
+        client, name="bundle-stale", executor=_codex_agent_executor("codex-removed")
+    )
+    assert session["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-1"
+    assert session["labels"][CODEX_HOME_LABEL_KEY] == str(Path("/var/accounts/codex-1").resolve())

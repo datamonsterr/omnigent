@@ -24,6 +24,7 @@ from omnigent.account_pools.manager import (
     AccountPoolExhaustedError,
     AccountPoolManager,
     prepare_session_account,
+    seed_agent_account_label,
 )
 from omnigent.account_pools.quota import (
     AccountQuota,
@@ -384,6 +385,68 @@ def test_child_creation_uses_chosen_identity_and_forwards_dirs() -> None:
     assert labels_agy[ACCOUNT_ID_LABEL_KEY] == "agy-prod"
     assert labels_agy[GEMINI_DIR_LABEL_KEY] == str(Path("/data/gemini-prod"))
     mgr.reservation_tracker.release(handle)
+
+
+@pytest.mark.parametrize("stale", ["unknown", "disabled"])
+def test_stale_pin_falls_back_to_pool_pick(stale: str, caplog: pytest.LogCaptureFixture) -> None:
+    """A pin to a removed or disabled account launches on the pool's pick."""
+    disabled = _account("codex-old", "/data/codex-old")
+    disabled.enabled = False
+    store = FakeStore([_pool("codex", [disabled, _account("codex-live", "/data/codex-live")])])
+    mgr = _manager(store)
+    mgr.count_active_sessions = MagicMock(return_value=0)
+
+    pinned = "codex-gone" if stale == "unknown" else "codex-old"
+    labels = {ACCOUNT_ID_LABEL_KEY: pinned}
+    handle = prepare_session_account(
+        initial_labels=labels, harness="codex", sub_agent_name=None, manager=mgr
+    )
+
+    assert handle is not None
+    assert labels[ACCOUNT_ID_LABEL_KEY] == "codex-live"
+    assert labels[CODEX_HOME_LABEL_KEY] == str(Path("/data/codex-live"))
+    assert f"Pinned account {pinned!r} is {stale}" in caplog.text
+    mgr.reservation_tracker.release(handle)
+
+
+def test_stale_pin_without_pool_drops_the_pin() -> None:
+    """A stale pin with no pool to fall back to leaves the session unassigned."""
+    labels = {ACCOUNT_ID_LABEL_KEY: "codex-gone"}
+    handle = prepare_session_account(
+        initial_labels=labels, harness="codex", sub_agent_name=None, manager=_manager(FakeStore())
+    )
+    assert handle is None
+    assert labels == {}
+
+
+@pytest.mark.parametrize(
+    ("session_labels", "expected"),
+    [
+        ({}, {ACCOUNT_ID_LABEL_KEY: "codex-2"}),
+        ({ACCOUNT_ID_LABEL_KEY: "codex-1"}, {ACCOUNT_ID_LABEL_KEY: "codex-1"}),
+        ({"account_id": "codex-1"}, {"account_id": "codex-1"}),
+        ({CODEX_HOME_LABEL_KEY: "/data/c1"}, {CODEX_HOME_LABEL_KEY: "/data/c1"}),
+    ],
+)
+def test_agent_default_account_seeds_only_an_unpinned_session(
+    session_labels: dict[str, str], expected: dict[str, str]
+) -> None:
+    """The agent's default account never overrides a session-level choice."""
+    spec = MagicMock()
+    spec.executor.config = {"harness": "codex", "account_id": " codex-2 "}
+    labels = dict(session_labels)
+    seed_agent_account_label(labels, spec)
+    assert labels == expected
+
+
+def test_agent_without_default_account_seeds_nothing() -> None:
+    """An agent with no ``account_id`` leaves the pick to the pool."""
+    spec = MagicMock()
+    spec.executor.config = {"harness": "codex", "account_id": ""}
+    labels: dict[str, str] = {}
+    seed_agent_account_label(labels, spec)
+    seed_agent_account_label(labels, None)
+    assert labels == {}
 
 
 def test_parse_codex_rate_limits() -> None:

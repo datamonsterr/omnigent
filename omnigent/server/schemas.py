@@ -192,6 +192,8 @@ class AgentConfigPatch(BaseModel):
     instructions: str | None = None
     model: str | None = Field(default=None, min_length=1)
     harness: str | None = Field(default=None, min_length=1)
+    #: The agent's default harness account; ``null`` clears it (automatic pick).
+    account_id: str | None = Field(default=None, min_length=1, max_length=256)
     mcp_servers: (
         dict[Annotated[str, Field(pattern=_MCP_SERVER_NAME_RE)], MCPServerPatch | None] | None
     ) = None
@@ -201,9 +203,9 @@ class AgentConfigPatch(BaseModel):
         for key in ("model", "harness", "mcp_servers"):
             if key in self.model_fields_set and getattr(self, key) is None:
                 raise ValueError(f"{key} cannot be null")
-        for value in (self.model, self.harness):
+        for value in (self.model, self.harness, self.account_id):
             if value is not None and not value.strip():
-                raise ValueError("Model and harness must be nonempty")
+                raise ValueError("Model, harness, and account must be nonempty")
         return self
 
 
@@ -229,6 +231,7 @@ class AgentConfigObject(BaseModel):
     description: str | None = None
     harness: str | None = None
     model: str | None = None
+    account_id: str | None = None
     instructions: str | None = None
     mcp_servers: dict[str, AgentMCPConfig] = Field(default_factory=dict)
 

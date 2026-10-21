@@ -45,6 +45,17 @@ const config: AgentConfig = {
 };
 
 describe("agent configuration patch", () => {
+  it("patches the default account only when it changes, sending null to clear it", () => {
+    const pinned = { ...config, account_id: "codex-acc1" };
+    const draft = agentConfigDraft(pinned);
+    expect(draft.accountId).toBe("codex-acc1");
+    expect(agentConfigPatch(pinned, draft)).toEqual({});
+    draft.accountId = "codex-acc2";
+    expect(agentConfigPatch(pinned, draft)).toEqual({ account_id: "codex-acc2" });
+    draft.accountId = null;
+    expect(agentConfigPatch(pinned, draft)).toEqual({ account_id: null });
+    expect(agentConfigPatch(config, agentConfigDraft(config))).toEqual({});
+  });
   it("preserves nulls, unknown harnesses, literal text, arguments and hidden credentials", () => {
     const draft = agentConfigDraft(config);
     expect(agentConfigPatch(config, draft)).toEqual({});

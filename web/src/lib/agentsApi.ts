@@ -47,6 +47,8 @@ export interface AgentConfig {
   instructions: string | null;
   model: string | null;
   harness: string | null;
+  /** Default harness account id; `null` lets the server pick. */
+  account_id?: string | null;
   mcp_servers: Record<string, AgentMCPConfig>;
 }
 
@@ -65,6 +67,7 @@ export interface AgentConfigPatch {
   instructions?: string;
   model?: string;
   harness?: string;
+  account_id?: string | null;
   mcp_servers?: Record<string, MCPConfigPatch | null>;
 }
 

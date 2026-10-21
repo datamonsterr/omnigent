@@ -183,7 +183,7 @@ import {
   writeLastHarness,
 } from "@/lib/harnessPreferences";
 import { readLastAccount, writeLastAccount } from "@/lib/accountPreferences";
-import { ACCOUNT_ID_LABEL } from "@/lib/accountPoolsApi";
+import { ACCOUNT_ID_LABEL, accountPoolHarness } from "@/lib/accountPoolsApi";
 import { readHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
 import { readDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import { readAlwaysUseWorktree } from "@/lib/worktreeDefaultPreferences";
@@ -3117,20 +3117,24 @@ export function NewChatLandingScreen() {
   // The selected native harness persists and restores harness-specific model,
   // effort, and permission knobs.
   const selectedNativeHarness = nativeCodingAgentForAvailableAgent(selectedAgent)?.harness ?? null;
+  // The harness whose account pool the account picker reads. An SDK agent runs
+  // on its native family's accounts (a custom `codex` agent uses `codex-native`).
+  const accountHarness =
+    selectedNativeHarness ?? accountPoolHarness(pickedHarness ?? selectedAgent?.harness ?? null);
   // A harness switch reseeds the account pick from the last account used for
   // that harness, so the picker opens on the account that harness last ran on.
   useEffect(() => {
-    if (pickedAccountHarness === selectedNativeHarness) return;
-    setPickedAccountHarness(selectedNativeHarness);
-    setPickedAccountId(readLastAccount(selectedNativeHarness));
-  }, [selectedNativeHarness, pickedAccountHarness]);
+    if (pickedAccountHarness === accountHarness) return;
+    setPickedAccountHarness(accountHarness);
+    setPickedAccountId(readLastAccount(accountHarness));
+  }, [accountHarness, pickedAccountHarness]);
   const selectAccount = useCallback(
     (accountId: string | null) => {
       setPickedAccountId(accountId);
-      setPickedAccountHarness(selectedNativeHarness);
-      writeLastAccount(selectedNativeHarness, accountId);
+      setPickedAccountHarness(accountHarness);
+      writeLastAccount(accountHarness, accountId);
     },
-    [selectedNativeHarness],
+    [accountHarness],
   );
   // A project's stored account default seeds the pick, so a session started in
   // that project runs under the account the project pins.
@@ -3139,10 +3143,10 @@ export function NewChatLandingScreen() {
     if (!configured) return;
     if (pickedAccountHarness !== null && pickedAccountId !== null) return;
     setPickedAccountId(configured);
-    setPickedAccountHarness(selectedNativeHarness);
-  }, [prefillConfig?.accountId, pickedAccountHarness, pickedAccountId, selectedNativeHarness]);
+    setPickedAccountHarness(accountHarness);
+  }, [prefillConfig?.accountId, pickedAccountHarness, pickedAccountId, accountHarness]);
   const accountSection = useAccountConfigSection({
-    harness: selectedNativeHarness,
+    harness: accountHarness,
     selectedAccountId: pickedAccountId,
     onSelect: selectAccount,
     testId: "new-chat-landing-agent-account",

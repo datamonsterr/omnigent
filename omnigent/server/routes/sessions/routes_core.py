@@ -27,6 +27,7 @@ from fastapi.responses import Response
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from omnigent.account_pools.labels import ACCOUNT_ID_LABEL_KEY
 from omnigent.codex_approval_modes import (
     CODEX_NATIVE_PERMISSION_VALUES,
 )
@@ -169,6 +170,7 @@ from omnigent.server.routes._sessions.helpers import (
     reconcile_orphaned_running_status,
 )
 from omnigent.server.routes._sessions.orchestration import (
+    _assign_session_account,
     _best_effort_stop,
     _build_session_list_item,
     _build_session_response,
@@ -179,6 +181,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _ensure_runner_relay_ready,
     _ensure_runner_session_initialized,
     _get_session_snapshot,
+    _hand_off_session_account,
     _is_native_terminal_session,
     _labels_for_viewer,
     _persist_model_change_note,
@@ -1163,20 +1166,43 @@ def register_core_routes(
             host_store=getattr(request.app.state, "host_store", None),
             parent=parent_conv,
         )
-        with creation_stage("create_persistence_ms"):
-            result = await asyncio.to_thread(
-                _create_session_from_bundle,
+        account_labels = dict(parsed_metadata.labels or {})
+        account_pool_mgr, reservation_handle = await _assign_session_account(
+            request,
+            account_labels,
+            spec=spec,
+            harness=spec_harness(spec),
+            sub_agent_name=None,
+            conversation_store=conversation_store,
+            model=spec.executor.model,
+        )
+        parsed_metadata = parsed_metadata.model_copy(update={"labels": account_labels})
+        try:
+            with creation_stage("create_persistence_ms"):
+                result = await asyncio.to_thread(
+                    _create_session_from_bundle,
+                    conversation_store,
+                    artifact_store,
+                    parsed_metadata,
+                    bundle_bytes,
+                    inherited_runner_id,
+                    spec,
+                    inference_snapshot,
+                    inference_model,
+                    created_by=user_id,
+                    agent_store=agent_store,
+                )
+            await _hand_off_session_account(
+                account_pool_mgr,
+                reservation_handle,
                 conversation_store,
-                artifact_store,
-                parsed_metadata,
-                bundle_bytes,
-                inherited_runner_id,
-                spec,
-                inference_snapshot,
-                inference_model,
-                created_by=user_id,
-                agent_store=agent_store,
+                result.session_id,
+                account_labels.get(ACCOUNT_ID_LABEL_KEY),
             )
+        except BaseException:
+            if reservation_handle is not None:
+                account_pool_mgr.reservation_tracker.release(reservation_handle)
+            raise
         session_created(
             result.session_id,
             inherited_runner_id,
