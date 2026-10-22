@@ -5789,6 +5789,14 @@
             "title": "Agent Install",
             "type": "boolean"
           },
+          "agent_picker_exclude_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Agent Picker Exclude Ids",
+            "type": "array"
+          },
           "archive_worktree_cleanup": {
             "default": true,
             "title": "Archive Worktree Cleanup",
@@ -5796,6 +5804,15 @@
           },
           "branding": {
             "$ref": "#/components/schemas/BrandingInfo"
+          },
+          "codex_account_selection_policy": {
+            "default": "load_first",
+            "enum": [
+              "load_first",
+              "quota_first"
+            ],
+            "title": "Codex Account Selection Policy",
+            "type": "string"
           },
           "databricks_features": {
             "title": "Databricks Features",
