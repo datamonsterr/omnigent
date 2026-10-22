@@ -1,3 +1,7 @@
+# Keep automatic Codex selection load-first unless the deployment opts into
+# fresh-quota-first ranking. Explicit session and agent account pins still win.
+codex_account_selection_policy: load_first
+
 sandbox:
   provider: blaxel
   server_url: https://omnigent.example.com
