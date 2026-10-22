@@ -210,6 +210,7 @@ map an area, remove it here in the same change.
 - Bundled agents and the Copilot harness: `omnigent polly`, `omnigent debby`,
   `omnigent copilot`
 - Installing reusable agents: `omnigent agent`
+- Harness account pools: `omnigent accounts`
 - Integrations, extensions, and remote sandboxes: `omnigent integration`,
   `omnigent extensions`, `omnigent sandbox`
 

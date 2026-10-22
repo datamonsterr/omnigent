@@ -82,10 +82,23 @@ def _assert_no_vulnerable_pin(
 
 _PNPM_FINDINGS = [
     ("@tiptap/core", "3.30.5", "GHSA-j95f-988m-3j2f"),
-    ("hono", "4.13.5", "CVE-2026-84363 / CVE-2026-84364 / CVE-2026-84365"),
+    ("hono", "4.13.11", "CVE-2026-84363 / CVE-2026-84364 / CVE-2026-84365 / CVE-2026-111757"),
     ("js-yaml", "4.3.2", "CVE-2026-84375"),
     ("react-router", "7.18.0", "CVE-2026-53666 / CVE-2026-53669"),
     ("react-router-dom", "6.30.6", "CVE-2026-53668"),
+    ("markdown-it", "14.3.3", "CVE-2026-111758 / CVE-2026-111759 / CVE-2026-111766"),
+    ("vite", "8.1.6", "CVE-2026-112942 / CVE-2026-112943 / CVE-2026-112944"),
+    ("proxy-addr", "2.0.8", "CVE-2026-90711"),
+    ("source-map-js", "1.2.2", "CVE-2026-93749"),
+    ("tinypool", "2.1.2", "CVE-2026-104848 / CVE-2026-104849"),
+    ("fast-uri", "3.1.8", "CVE-2026-84292 / CVE-2026-84394 / CVE-2026-86472"),
+    ("ip-address", "10.7.1", "CVE-2026-101910 / CVE-2026-101911 / CVE-2026-101912"),
+    ("postcss-selector-parser", "7.1.6", "CVE-2026-104844"),
+    ("vitest", "4.1.11", "CVE-2026-84373"),
+    ("@vitest/mocker", "4.1.11", "CVE-2026-84373"),
+    ("katex", "0.18.2", "CVE-2026-103923"),
+    ("dompurify", "3.4.16", "GHSA-p98j-92pf-mc4p / GHSA-6688-9rhm-gjv2"),
+    ("http-cache-semantics", "4.3.0", "CVE-2026-93748"),
 ]
 
 
@@ -96,6 +109,35 @@ _PNPM_FINDINGS = [
 )
 def test_pnpm_lock_has_no_vulnerable_pin(name: str, fixed: str, advisory: str) -> None:
     _assert_no_vulnerable_pin("pnpm-lock.yaml", name, _pnpm_versions(name), fixed, advisory)
+
+
+@pytest.mark.parametrize(
+    ("name", "major", "fixed"),
+    [
+        ("undici", 6, "6.28.1"),
+        ("undici", 7, "7.29.1"),
+        ("brace-expansion", 1, "1.1.21"),
+        ("brace-expansion", 2, "2.1.7"),
+        ("brace-expansion", 5, "5.0.12"),
+    ],
+)
+def test_pnpm_lock_supported_major_has_no_vulnerable_pin(
+    name: str, major: int, fixed: str
+) -> None:
+    versions = {version for version in _pnpm_versions(name) if _ver(version)[0] == major}
+    _assert_no_vulnerable_pin("pnpm-lock.yaml", name, versions, fixed, "Trivy security fixes")
+
+
+@pytest.mark.parametrize(
+    ("name", "fixed", "advisory"),
+    [
+        ("pillow", "13.0.0", "CVE-2026-112403"),
+        ("certifi", "2026.10.19", "GHSA-6q48-6c7w-9gw2"),
+        ("aiohttp", "3.14.4", "CVE-2026-111064 / CVE-2026-111066"),
+    ],
+)
+def test_uv_lock_has_no_vulnerable_pin(name: str, fixed: str, advisory: str) -> None:
+    _assert_no_vulnerable_pin("uv.lock", name, _uv_versions(name), fixed, advisory)
 
 
 def test_uv_lock_cryptography_at_fixed_version() -> None:

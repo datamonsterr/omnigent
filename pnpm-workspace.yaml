@@ -9,6 +9,10 @@ packages:
 
 # 7-day dependency cooldown, mirroring the Python-side exclude-newer = "P7D" in uv.toml.
 minimumReleaseAge: 10080
+# The exact security release fixes CVE-2026-111758/111759/111766.
+# Drop after 2026-10-23, once it has aged past the cooldown.
+minimumReleaseAgeExclude:
+  - 'markdown-it@14.3.3'
 
 settings:
   autoInstallPeers: false
@@ -30,10 +34,9 @@ catalog:
   shiki: 4.2.0
 
 overrides:
-  # Build-tool pins that match the legacy npm lockfile. Removing them allowed pnpm
-  # to resolve newer Vite/Tailwind patches whose new bundler/chunking produced a
-  # broken split of the Shiki bundle and lost the PDF worker asset.
-  vite: 8.1.0
+  # Keep build tools pinned: bundler/chunking changes can break Shiki splitting
+  # and lose the PDF worker asset. Vite security fixes stay on the 8.1 line.
+  vite: 8.1.6
   tailwindcss: 4.3.1
   '@tailwindcss/vite': 4.3.1
   '@tailwindcss/node': 4.3.1
@@ -42,26 +45,33 @@ overrides:
   lightningcss: 1.32.0
   postcss: 8.5.29
   browserslist: 4.28.8
-  fast-uri: 3.1.6
+  fast-uri: 3.1.8
   '@xmldom/xmldom': 0.8.15
   qs: 6.16.0
   query-string: 9.5.0
   '@hono/node-server': 1.19.15
-  hono: 4.13.5
+  hono: 4.13.11
   linkify-it: 5.0.2
   shiki: "catalog:"
   react: "catalog:"
   react-dom: "catalog:"
-  dompurify: 3.4.14
+  dompurify: 3.4.16
   # KaTeX 0.18.11 was accidentally published with breaking changes.
   'katex@0.18.11': 0.18.10
+  'katex@>=0.16.0 <0.18.2': 0.18.10
   mermaid: 11.16.1
   tar: 7.5.21
-  'node-gyp>undici': 6.28.0
-  'undici@>=7.0.0 <8.0.0': 7.29.0
-  'brace-expansion@>=1.0.0 <2.0.0': 1.1.18
-  'brace-expansion@>=2.0.0 <3.0.0': 2.1.4
-  'brace-expansion@>=5.0.0 <6.0.0': 5.0.9
+  'node-gyp>undici': 6.28.1
+  'undici@>=7.0.0 <8.0.0': 7.29.1
+  'brace-expansion@>=1.0.0 <2.0.0': 1.1.21
+  'brace-expansion@>=2.0.0 <3.0.0': 2.1.7
+  'brace-expansion@>=5.0.0 <6.0.0': 5.0.12
+  markdown-it: 14.3.3
+  proxy-addr: 2.0.8
+  source-map-js: 1.2.2
+  tinypool: 2.1.2
+  'postcss-selector-parser@<7.1.6': 7.1.6
+  http-cache-semantics: 4.3.0
   '@shikijs/core': 4.2.0
   '@shikijs/engine-javascript': 4.2.0
   '@shikijs/engine-oniguruma': 4.2.0
@@ -100,7 +110,7 @@ overrides:
   '@tiptap/pm': 3.31.4
   '@tiptap/react': 3.31.4
   '@tiptap/starter-kit': 3.31.4
-  express-rate-limit>ip-address: 10.3.1
+  express-rate-limit>ip-address: 10.7.1
 
 allowBuilds:
   '@anthropic-ai/claude-code': true

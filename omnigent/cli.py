@@ -2084,6 +2084,7 @@ def cli() -> None:
 # Keep in sync with ``@cli.command()`` decorations below.
 _CLICK_SUBCOMMANDS: frozenset[str] = frozenset(
     {
+        "accounts",
         "agent",
         "agy",
         "antigravity",
