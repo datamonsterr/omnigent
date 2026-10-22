@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import json
 import re
+from email import policy
+from email.parser import BytesParser
 from typing import Any
 
+import pytest
 from playwright.async_api import Route, async_playwright, expect
 
 from tests._helpers.async_thread import run_in_fresh_loop as _run_in_fresh_loop
@@ -91,7 +94,21 @@ async def _register_routes(
             if "multipart" in content_type:
                 # For multipart, we can't easily parse the binary body in
                 # Playwright, so just record that a multipart POST happened.
-                create_requests.append({"__multipart__": True})
+                message = BytesParser(policy=policy.default).parsebytes(
+                    f"Content-Type: {content_type}\r\n\r\n".encode()
+                    + (route.request.post_data_buffer or b"")
+                )
+                metadata = next(
+                    part
+                    for part in message.iter_parts()
+                    if part.get_param("name", header="content-disposition") == "metadata"
+                )
+                create_requests.append(
+                    {
+                        "__multipart__": True,
+                        "metadata": json.loads(metadata.get_payload(decode=True)),
+                    }
+                )
             else:
                 create_requests.append(route.request.post_data_json)
             await route.fulfill(
@@ -114,6 +131,24 @@ async def _register_routes(
             body=json.dumps({"data": []}),
         )
 
+    await page.route(
+        "**/v1/account-pools*",
+        lambda route: route.fulfill(
+            json={
+                "data": [
+                    {
+                        "id": "codex",
+                        "name": "codex",
+                        "harness": "codex-native",
+                        "accounts": [
+                            {"id": f"codex-acc{index}", "enabled": True, "quota": None}
+                            for index in range(1, 6)
+                        ],
+                    }
+                ]
+            }
+        ),
+    )
     await page.route("**/v1/hosts", handle_hosts)
     await stub_empty_host_picker_data(page, _HOST_ID)
     await page.route("**/v1/agents", handle_agents)
@@ -152,18 +187,26 @@ async def _open_create_agent(page) -> None:
 # ── Tests ──────────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize(
+    "viewport",
+    [{"width": 1440, "height": 1000}, {"width": 390, "height": 844}],
+    ids=["desktop", "mobile"],
+)
 def test_create_agent_submits_multipart_bundle(
     seeded_session: tuple[str, str],
+    viewport: dict[str, int],
 ) -> None:
     """Creating a custom agent and sending produces a multipart POST."""
     base_url, session_id = seeded_session
-    _run_in_fresh_loop(_drive_create_and_submit(base_url, session_id))
+    _run_in_fresh_loop(_drive_create_and_submit(base_url, session_id, viewport))
 
 
-async def _drive_create_and_submit(base_url: str, session_id: str) -> None:
+async def _drive_create_and_submit(
+    base_url: str, session_id: str, viewport: dict[str, int]
+) -> None:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
-        page = await browser.new_page()
+        page = await browser.new_page(viewport=viewport)
         try:
             create_requests: list[dict[str, Any]] = []
             await _register_routes(
@@ -190,6 +233,15 @@ async def _drive_create_and_submit(base_url: str, session_id: str) -> None:
                 "You are a test assistant."
             )
 
+            await page.get_by_test_id("create-agent-harness").click()
+            await page.get_by_role("option", name="Codex", exact=True).click()
+            await page.get_by_test_id("create-agent-account").click()
+            for index in range(1, 6):
+                await expect(
+                    page.get_by_test_id(f"create-agent-account-codex-acc{index}")
+                ).to_be_visible()
+            await page.get_by_test_id("create-agent-account-codex-acc5").click()
+
             # Submit the dialog.
             await page.get_by_test_id("create-agent-submit").click()
 
@@ -207,6 +259,7 @@ async def _drive_create_and_submit(base_url: str, session_id: str) -> None:
 
             # The create POST should have been a multipart request (the bundle).
             await poll_until_async(lambda: len(create_requests) == 1)
+            assert create_requests[0]["metadata"]["labels"]["omnigent.account.id"] == "codex-acc5"
             assert create_requests[0].get("__multipart__") is True, (
                 f"Expected multipart POST, got: {create_requests[0]}"
             )

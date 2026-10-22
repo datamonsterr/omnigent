@@ -1696,6 +1696,10 @@ class ExternalRoutingClient:
         self._url = base_url.rstrip("/") + "/" + ROUTES_SELECT_PATH
         self._router_name = router_name
         self._auth = auth
+        # Required arm menus can name gateway models outside the caller's catalog.
+        self.requires_gateway_inference = any(
+            scenario_menus(menus, router_name=router_name).values()
+        )
         self._databricks_profile = databricks_profile
         self._auth_provider = auth_provider
         # Cached SDK Config for the profile (created lazily), reused across
@@ -2060,9 +2064,9 @@ async def route_session_harness(
         live runner catalog is in reach; the static table then only tops up the
         candidates it could not answer for.
     :param gateway_backed: Whether every candidate harness resolves
-        AI-Gateway-backed inference on the target host. ``False`` takes the
-        external router out of play (its picks are gateway catalog ids the pane
-        cannot reach) and the built-in judge answers instead.
+        AI-Gateway-backed inference on the target host. ``False`` excludes
+        routers requiring gateway inference; generic external providers and
+        the built-in judge can still answer from the caller's catalog.
     :param allow_static_fallback: Whether the static :func:`infer_models` table
         may supply or top up candidates. Callers pass ``gateway_backed``: that
         table is all ``databricks-*`` ids, so off the gateway it would offer

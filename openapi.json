@@ -5923,6 +5923,11 @@
             "title": "Smart Routing Enabled",
             "type": "boolean"
           },
+          "smart_routing_external_requires_gateway": {
+            "default": true,
+            "title": "Smart Routing External Requires Gateway",
+            "type": "boolean"
+          },
           "smart_routing_sources": {
             "$ref": "#/components/schemas/SmartRoutingSourcesInfo"
           }

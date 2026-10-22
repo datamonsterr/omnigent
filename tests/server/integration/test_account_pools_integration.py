@@ -7,6 +7,7 @@ the store and let the server pick the account on the session-create path.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from httpx import AsyncClient
@@ -149,6 +150,57 @@ async def test_session_create_antigravity_forwards_gemini_dir(
     assert labels.get(ACCOUNT_ID_LABEL_KEY) == "agy-1"
     assert labels.get(ACCOUNT_POOL_LABEL_KEY) == "antigravity"
     assert labels.get(GEMINI_DIR_LABEL_KEY) == str(Path("/var/accounts/agy-1/.gemini").resolve())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "named_child,home_source", [(False, "config"), (True, "config"), (False, "labels")]
+)
+async def test_explicit_account_overrides_spec_home_default(
+    client: AsyncClient,
+    account_pool_store: SqlAlchemyAccountPoolStore,
+    named_child: bool,
+    home_source: str,
+) -> None:
+    """A per-create account overrides the registered agent's or named worker's home."""
+    _install_manager(client, account_pool_store)
+    executor: dict[str, Any] = {"type": "omnigent", "config": {"harness": "codex-native"}}
+    guardrails = None
+    if home_source == "config":
+        executor["config"]["codex_home"] = "/var/accounts/saved-home"
+    else:
+        guardrails = {"labels": {"codex_home": {"initial": "/var/accounts/saved-home"}}}
+    worker = {"name": "worker", "executor": executor}
+    agent = await create_test_agent(
+        client,
+        executor=None if named_child else executor,
+        guardrails=None if named_child else guardrails,
+        sub_agents=[worker] if named_child else None,
+    )
+    body: dict[str, Any] = {"agent_id": agent["id"], "labels": {ACCOUNT_ID_LABEL_KEY: "codex-2"}}
+    if named_child:
+        body["parent_session_id"] = agent["_session_id"]
+        body["sub_agent_name"] = "worker"
+
+    saved_default = await client.post("/v1/sessions", json={**body, "labels": {}})
+    assert saved_default.status_code == 201, saved_default.text
+    assert saved_default.json()["labels"][CODEX_HOME_LABEL_KEY] == "/var/accounts/saved-home"
+    response = await client.post("/v1/sessions", json=body)
+    assert response.status_code == 201, response.text
+    labels = response.json()["labels"]
+    assert labels[ACCOUNT_ID_LABEL_KEY] == "codex-2"
+    assert labels[CODEX_HOME_LABEL_KEY] == "/var/accounts/codex-2"
+
+    # Explicitly conflicting caller inputs remain invalid, even with a saved home.
+    body["labels"][CODEX_HOME_LABEL_KEY] = "/var/accounts/codex-1"
+    conflict = await client.post("/v1/sessions", json=body)
+    assert conflict.status_code == 400, conflict.text
+    assert "conflicts" in conflict.text
+
+    body["labels"] = {ACCOUNT_ID_LABEL_KEY: "missing"}
+    invalid = await client.post("/v1/sessions", json=body)
+    assert invalid.status_code == 400, invalid.text
+    assert "Pinned account 'missing' is unknown" in invalid.text
 
 
 @pytest.mark.asyncio
@@ -433,3 +485,30 @@ async def test_session_account_overrides_agent_default_home(
         labels={ACCOUNT_ID_LABEL_KEY: "codex-1"},
     )
     assert session["labels"][CODEX_HOME_LABEL_KEY] == "/var/accounts/codex-1"
+
+
+@pytest.mark.asyncio
+async def test_custom_agent_account_default_survives_bundle_and_registered_create(
+    client: AsyncClient, account_pool_store: SqlAlchemyAccountPoolStore
+) -> None:
+    """Reusable custom agents keep their pin; a session can explicitly override it."""
+    _install_manager(client, account_pool_store)
+    agent = await create_test_agent(
+        client,
+        executor={
+            "type": "omnigent",
+            "config": {"harness": "codex-native", "account_id": "codex-2"},
+        },
+    )
+    bundled = await client.get(f"/v1/sessions/{agent['_session_id']}")
+    assert bundled.json()["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-2"
+    for explicit, expected in [(None, "codex-2"), ("codex-1", "codex-1")]:
+        response = await client.post(
+            "/v1/sessions",
+            json={
+                "agent_id": agent["id"],
+                "labels": {ACCOUNT_ID_LABEL_KEY: explicit} if explicit else {},
+            },
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["labels"][ACCOUNT_ID_LABEL_KEY] == expected

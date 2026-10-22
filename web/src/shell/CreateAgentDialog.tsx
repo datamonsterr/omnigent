@@ -345,8 +345,8 @@ function useAgentFormFields() {
       description: description.trim() || undefined,
       instructions: instructions.trim() || undefined,
       harness,
-      model: model.trim(),
       accountId,
+      model: model.trim(),
       mcpServers: toMCPInputs(mcpEntries),
     };
   }
@@ -385,9 +385,9 @@ function AgentFormFields({
   setInstructions,
   harness,
   setHarness,
-  harnessOptions,
   accountId,
   setAccountId,
+  harnessOptions,
   model,
   setModel,
   mcpEntries,

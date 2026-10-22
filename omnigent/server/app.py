@@ -197,9 +197,12 @@ class ServerInfoResponse(BaseModel):
     server_version: str
     smart_routing_enabled: bool
     smart_routing_sources: SmartRoutingSourcesInfo
+    smart_routing_external_requires_gateway: bool = True
     # The server keeps a harness account inventory (DB-backed pools). Absent on
     # older servers, which clients treat as "no account picker".
     account_pools_enabled: bool = False
+    codex_account_selection_policy: Literal["load_first", "quota_first"] = "load_first"
+    agent_picker_exclude_ids: list[str] = []
     features: dict[str, bool]
     harness_install_enabled: bool
     installable_harnesses: list[str]
@@ -1962,6 +1965,9 @@ def create_app(
         app.state.account_pool_manager = AccountPoolManager(
             store=account_pool_store,
             conversation_store=conversation_store,
+            codex_selection_policy=resolved_server_config.get(
+                "codex_account_selection_policy", "load_first"
+            ),
         )
     # Deployment base path (e.g. "/proxy/6767"), so route handlers that build
     # a full-page redirect (not covered by BasePathMiddleware's inbound-only
@@ -3143,13 +3149,22 @@ def create_app(
         # for a deployment whose sources say a router would answer.
         try:
             from omnigent.runtime._globals import _caps
-            from omnigent.server.routing_backend import routing_available, routing_sources
+            from omnigent.server.routing_backend import (
+                backends_from_caps,
+                routing_available,
+                routing_sources,
+                usable_external,
+            )
 
             smart_routing_enabled = routing_available(_caps)
             smart_routing_sources = routing_sources(_caps)
+            external_requires_gateway = getattr(
+                usable_external(backends_from_caps(_caps)), "requires_gateway_inference", True
+            )
         except ImportError:
             smart_routing_enabled = False
             smart_routing_sources = {"external": False, "oss": False}
+            external_requires_gateway = True
         # The immutable feature snapshot is shared by capability
         # advertisement and route enforcement, so frontend and backend cannot
         # disagree during a process lifetime.
@@ -3190,7 +3205,22 @@ def create_app(
                 "server_version": _server_version(),
                 "smart_routing_enabled": smart_routing_enabled,
                 "account_pools_enabled": account_pool_store is not None,
+                "codex_account_selection_policy": getattr(
+                    getattr(app.state, "account_pool_manager", None),
+                    "codex_selection_policy",
+                    "load_first",
+                ),
+                "agent_picker_exclude_ids": sorted(
+                    {
+                        value.strip()
+                        for value in os.environ.get("OMNIGENT_AGENT_PICKER_EXCLUDE_IDS", "").split(
+                            ","
+                        )
+                        if value.strip()
+                    }
+                ),
                 "smart_routing_sources": smart_routing_sources,
+                "smart_routing_external_requires_gateway": external_requires_gateway,
                 "features": app.state.feature_flags.frontend_dict(),
                 "harness_install_enabled": harness_install_enabled,
                 "installable_harnesses": installable_harnesses,

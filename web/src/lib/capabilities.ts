@@ -73,6 +73,9 @@ export type FeatureValues = Record<string, boolean>;
 
 /** Shape of the response from ``GET /v1/info``. */
 export interface ServerInfo {
+  /** Exact registry IDs hidden only from new-session choices. */
+  agent_picker_exclude_ids?: string[];
+  codex_account_selection_policy?: "load_first" | "quota_first";
   accounts_enabled: boolean;
   /**
    * True only on an explicit single-user local runtime
@@ -178,6 +181,8 @@ export interface ServerInfo {
    * ``smart_routing_enabled``.
    */
   smart_routing_sources: SmartRoutingSources;
+  /** Absent on older servers, whose external router requires gateway inference. */
+  smart_routing_external_requires_gateway?: boolean;
   /**
    * True when the server keeps a harness account inventory (database-backed
    * account pools). Absent on older servers, which clients treat as "no
@@ -370,6 +375,9 @@ export async function resolveServerInfo(): Promise<ServerInfo> {
         const smartRoutingEnabled = data.smart_routing_enabled === true;
         const harnessInstallEnabled = data.harness_install_enabled === true;
         cachedServerInfo = {
+          agent_picker_exclude_ids: Array.isArray(data.agent_picker_exclude_ids)
+            ? data.agent_picker_exclude_ids.filter((id): id is string => typeof id === "string")
+            : [],
           accounts_enabled: data.accounts_enabled === true,
           single_user: data.single_user === true,
           login_url: typeof data.login_url === "string" ? data.login_url : null,
@@ -401,11 +409,15 @@ export async function resolveServerInfo(): Promise<ServerInfo> {
           public_sharing_max_level: data.public_sharing_max_level === "edit" ? "edit" : "read",
           server_version: typeof data.server_version === "string" ? data.server_version : null,
           smart_routing_enabled: smartRoutingEnabled,
+          smart_routing_external_requires_gateway:
+            data.smart_routing_external_requires_gateway !== false,
           smart_routing_sources: parseSmartRoutingSources(
             data.smart_routing_sources,
             smartRoutingEnabled,
           ),
           account_pools_enabled: data.account_pools_enabled === true,
+          codex_account_selection_policy:
+            data.codex_account_selection_policy === "quota_first" ? "quota_first" : "load_first",
           features: parseFeatures(data.features, harnessInstallEnabled),
           harness_install_enabled: harnessInstallEnabled,
           installable_harnesses: Array.isArray(data.installable_harnesses)

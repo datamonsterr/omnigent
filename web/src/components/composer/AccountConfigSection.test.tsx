@@ -92,7 +92,9 @@ describe("useAccountConfigSection", () => {
         }),
       { wrapper },
     );
-    await waitFor(() => expect(result.current).not.toBeNull());
+    await waitFor(() =>
+      expect(result.current?.choices.some((choice) => choice.key === "codex-acc1")).toBe(true),
+    );
     const keys = result.current!.choices.map((choice) => choice.key);
     expect(keys).toEqual(["__auto__", "codex-acc1"]);
   });
@@ -109,7 +111,9 @@ describe("useAccountConfigSection", () => {
         }),
       { wrapper },
     );
-    await waitFor(() => expect(result.current).not.toBeNull());
+    await waitFor(() =>
+      expect(result.current?.choices.some((choice) => choice.key === "codex-acc1")).toBe(true),
+    );
     const chosen = result.current!.choices.find((choice) => choice.key === "codex-acc1");
     expect(chosen?.checked).toBe(true);
   });
@@ -127,5 +131,34 @@ describe("useAccountConfigSection", () => {
       { wrapper },
     );
     await waitFor(() => expect(result.current).toBeNull());
+  });
+  it("keeps an error section visible and retries discovery", async () => {
+    let failing = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      failing
+        ? Response.json({ detail: "Inventory unavailable" }, { status: 503 })
+        : Response.json(POOLS),
+    );
+    const { result } = renderHook(
+      () =>
+        useAccountConfigSection({
+          harness: "codex-native",
+          selectedAccountId: null,
+          onSelect: vi.fn(),
+        }),
+      { wrapper },
+    );
+    await waitFor(() =>
+      expect(result.current?.choices.find((choice) => choice.key === "retry")).toBeTruthy(),
+    );
+    expect(result.current!.choices[0].label).toContain("Inventory unavailable");
+    failing = false;
+    result.current!.choices.find((choice) => choice.key === "retry")!.onSelect!();
+    await waitFor(() =>
+      expect(result.current!.choices.map((choice) => choice.key)).toEqual([
+        "__auto__",
+        "codex-acc1",
+      ]),
+    );
   });
 });

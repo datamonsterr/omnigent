@@ -123,6 +123,9 @@ user-visible behavior. It then uses exactly these four H2 sections in order:
 - [Markdown editor](./markdown-editor.md) defines the file-editor CUJ, fixed
   before/after recordings, load probes, and complementary persistence checks.
 
+- [Subscription accounts](./accounts.md) covers account inventory, usage periods,
+  custom-agent account defaults, composer choices, and request recovery.
+
 - [Custom agents](./custom-agents.md) covers Settings listing, creation, summary
   review, deletion, and capability gating.
 
@@ -196,6 +199,7 @@ map an area, remove it here in the same change.
 
 **CLI commands:**
 
+- Subscription account CLI: `omnigent accounts` (the web surface is mapped separately).
 - Setup and diagnostics: `omnigent setup`, `omnigent config`, `omnigent doctor`,
   `omnigent diagnose`, `omnigent debug`, `omnigent usage` (config defaults are
   mapped; credential configuration and the other commands remain unmapped)
@@ -206,6 +210,7 @@ map an area, remove it here in the same change.
 - Bundled agents and the Copilot harness: `omnigent polly`, `omnigent debby`,
   `omnigent copilot`
 - Installing reusable agents: `omnigent agent`
+- Harness account pools: `omnigent accounts`
 - Integrations, extensions, and remote sandboxes: `omnigent integration`,
   `omnigent extensions`, `omnigent sandbox`
 

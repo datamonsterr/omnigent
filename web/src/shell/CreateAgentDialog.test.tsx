@@ -198,4 +198,45 @@ describe("CreateAgentDialog", () => {
     await waitFor(() => expect(screen.getByTestId("create-agent-import")).not.toBeDisabled());
     expect(screen.getByTestId("create-agent-name")).toHaveValue("");
   });
+  it("lists all five accounts, submits a pin, and clears it on harness change", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      Response.json({
+        data: ["codex-native", "antigravity-native"].map((harness) => ({
+          id: harness,
+          name: harness,
+          harness,
+          accounts: Array.from({ length: 5 }, (_, i) => ({
+            id: `${harness}-${i + 1}`,
+            enabled: true,
+            quota: null,
+          })),
+        })),
+      }),
+    );
+    const onCreate = vi.fn();
+    renderDialog({ onCreate });
+    fireEvent.change(screen.getByTestId("create-agent-name"), {
+      target: { value: "account-agent" },
+    });
+    fireEvent.change(screen.getByTestId("create-agent-model"), { target: { value: "test-model" } });
+    await userEvent.click(screen.getByTestId("create-agent-harness"));
+    await userEvent.click(screen.getByRole("option", { name: "Codex" }));
+    await userEvent.click(await screen.findByTestId("create-agent-account"));
+    for (let i = 1; i <= 5; i++)
+      expect(screen.getByTestId(`create-agent-account-codex-native-${i}`)).toBeTruthy();
+    await userEvent.click(screen.getByTestId("create-agent-account-codex-native-5"));
+    fireEvent.click(screen.getByTestId("create-agent-submit"));
+    expect(onCreate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ accountId: "codex-native-5" }),
+    );
+    await userEvent.click(screen.getByTestId("create-agent-harness"));
+    await userEvent.click(screen.getByRole("option", { name: "Antigravity" }));
+    await userEvent.click(await screen.findByTestId("create-agent-account"));
+    for (let i = 1; i <= 5; i++)
+      expect(screen.getByTestId(`create-agent-account-antigravity-native-${i}`)).toBeTruthy();
+    await userEvent.click(screen.getByTestId("create-agent-account-antigravity-native-1"));
+    await userEvent.click(screen.getByTestId("create-agent-harness"));
+    await userEvent.click(screen.getByRole("option", { name: "Codex" }));
+    expect(screen.getByTestId("create-agent-account")).toHaveTextContent("Auto");
+  });
 });

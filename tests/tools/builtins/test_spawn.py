@@ -13,7 +13,7 @@ import jsonschema
 import pytest
 
 from omnigent.spec.types import AgentSpec
-from omnigent.tools.builtins.spawn import _build_sys_session_send_schema
+from omnigent.tools.builtins.spawn import SysSessionCreateTool, _build_sys_session_send_schema
 
 
 def _args_schema() -> dict:
@@ -128,3 +128,28 @@ def test_empty_file_id_rejected() -> None:
 def test_file_ids_non_string_item_rejected() -> None:
     with pytest.raises(jsonschema.ValidationError):
         _validate({"input": "go", "file_ids": [123]})
+
+
+@pytest.mark.parametrize("tool", ["send", "create"])
+@pytest.mark.parametrize("account", ["codex-acc3", "agy-acc2"])
+def test_account_schema_accepts_pool_account_id(tool: str, account: str) -> None:
+    """Both dispatch tools accept an optional pool account pin."""
+    if tool == "send":
+        _validate({"input": "go", "account": account})
+    else:
+        schema = SysSessionCreateTool().get_schema()["function"]["parameters"]
+        jsonschema.validate({"agent": "designer", "account": account}, schema)
+
+
+@pytest.mark.parametrize("tool", ["send", "create"])
+@pytest.mark.parametrize("account", [42, "", "   ", None])
+def test_account_schema_rejects_invalid_pin(tool: str, account: object) -> None:
+    """An explicit pin must be a nonblank string."""
+    schema = (
+        _args_schema()
+        if tool == "send"
+        else SysSessionCreateTool().get_schema()["function"]["parameters"]
+    )
+    args = {"input": "go"} if tool == "send" else {"agent_id": "ag_x"}
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**args, "account": account}, schema)

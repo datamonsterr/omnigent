@@ -31,7 +31,7 @@ export interface AgentBundleInput {
   harness: string;
   /** Model identifier, e.g. "claude-sonnet-4-20250514". Required by the omnigent executor. */
   model: string;
-  /** Default harness account id, e.g. "codex-acc1". Omitted lets the server pick. */
+  /** Default harness account id, e.g. "codex-acc1"; null lets the server choose. */
   accountId?: string | null;
   /** MCP server declarations to include as inline tools entries. */
   mcpServers?: MCPServerInput[];

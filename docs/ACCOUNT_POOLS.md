@@ -77,7 +77,8 @@ idempotent.
 ## How a session gets its account
 
 1. An explicit pin wins: the session carries `omnigent.account.id` (the
-   picker, a project default, or a scheduled task's `account_id`).
+   picker, a project default, a scheduled task's `account_id`, or a
+   per-dispatch `account`).
 2. Otherwise the agent's default account (`executor.config.account_id`)
    pins the session. This applies to both the agent-id create and the
    multipart bundle create.
@@ -97,6 +98,69 @@ as the child's actual model before the harness reports it.
 The runner reads the chosen home from the session labels. Both `codex-native`
 and the SDK `codex` harness bridge Codex auth and config from
 `omnigent.codex.codex_home`.
+
+## Opt-in Codex quota-first selection
+
+Set this non-secret server setting before starting the server:
+
+```yaml
+codex_account_selection_policy: quota_first
+```
+
+The default is `load_first`. Only Codex automatic selection changes: fresh
+known usable quota first, then most remaining five-hour quota, then weekly
+quota, then fewest active plus pending sessions, then account ID. Explicit pins
+and other harness families retain their existing behavior. Settings → Accounts
+and the Codex Auto tooltip show the active policy reported by `/v1/info`.
+
+Quota observations must be no more than 120 seconds old and cannot be dated
+in the future to rank as known. Unknown or failed probes remain fallback
+candidates after fresh known usable accounts. A failed, unknown, or stale
+refresh cannot clear prior exhaustion, blocked, or failed-auth evidence; that
+account remains excluded until a fresh known observation permits it. Stale
+positive quota is not proof of availability. The probes read quota metadata
+without making paid inference calls. Applying server settings requires the
+normal deployment lifecycle; do not restart an active instance for this change.
+
+## Per-dispatch accounts
+
+Orchestrators such as Polly and Debby can choose a pool account for each new
+child session. For a declared worker, set `args.account` on its first named
+`sys_session_send`:
+
+```json
+{"agent":"codex","title":"auth-fix","args":{"input":"Fix the auth bug","account":"codex-acc3"}}
+```
+
+For an existing registered agent, use `sys_session_create` with exactly one of
+`agent` (the exact name from `sys_agent_list`) or `agent_id`. Names include
+custom global agents registered from `~/.omnigent/agents` in the server catalog
+(for example with `omnigent server --agent ~/.omnigent/agents/designer`).
+You can combine the account pin with a model and reasoning effort:
+
+```json
+{"agent":"codex-3","account":"codex-acc3","model":"gpt-5.4","reasoning_effort":"high","title":"auth-fix"}
+```
+
+The tool writes `account` to the new session's `omnigent.account.id` label;
+the server validates that the account exists, is enabled, serves the child's
+harness, and has no known exhausted or blocked quota. Invalid explicit pins
+fail creation without falling back to another account. The account's credential
+home overrides the agent spec's saved home; conflicting homes explicitly
+supplied in the same request are rejected. Omit `account` to let
+the server choose from the pool. `config_path` creates do not accept `account`.
+
+Drive a created child with `sys_session_send` using its returned
+`conversation_id` as `session_id` and `args` as the message. Account pins apply
+only at creation: both named continuations and sends by `session_id` reject
+`args.account`. Continue without the pin, or close and create a new child to
+select another account. The same creation-only rule applies to model and effort.
+
+Named `sys_session_send` dispatches to Claude native and SDK workers also
+accept the family aliases `sonnet`, `haiku`, and `opus`, plus `claude-sonnet`,
+`claude-haiku`, and `claude-opus`. Dispatch normalizes these prefixed family
+aliases to bare aliases. Versioned model IDs pass through unchanged, and Claude
+workers still reject GPT models.
 
 ## API
 

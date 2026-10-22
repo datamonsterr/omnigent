@@ -82,7 +82,10 @@ export async function fetchAccountPools(
   const res = await authenticatedFetch(
     `/v1/account-pools?period_days=${encodeURIComponent(String(periodDays))}`,
   );
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok)
+    throw new Error(
+      `${res.status} ${await errorDetail(res, res.statusText || "Could not load accounts.")}`,
+    );
   const body = (await res.json()) as AccountPoolListWire;
   return body.data ?? [];
 }
@@ -229,13 +232,17 @@ export function selectableAccounts(pool: AccountPool | null): AccountPoolAccount
 /** One-line quota summary for an account row. */
 export function accountQuotaSummary(account: AccountPoolAccount): string {
   const quota = account.quota;
-  if (!quota || !quota.known) return "Quota unknown";
+  if (!quota) return "Quota unknown";
+  if (quota.status === "auth_failed") return "Authentication failed";
+  if (quota.status === "blocked") return "Blocked";
+  if (quota.status === "exhausted" || quota.exhausted) return "Quota exhausted";
+  if (quota.status === "probe_error") return "Quota check failed";
+  if (!quota.known) return "Quota unknown";
   const fiveHour = quota.five_hour.remaining_pct;
   const weekly = quota.weekly.remaining_pct;
   const parts: string[] = [];
   if (typeof fiveHour === "number") parts.push(`5h ${Math.round(fiveHour)}%`);
   if (typeof weekly === "number") parts.push(`weekly ${Math.round(weekly)}%`);
   if (parts.length === 0) return "Quota unknown";
-  if (quota.exhausted) return `${parts.join(" · ")} · exhausted`;
-  return parts.join(" · ");
+  return `${parts.join(" · ")}${quota.stale ? " · stale" : ""}`;
 }

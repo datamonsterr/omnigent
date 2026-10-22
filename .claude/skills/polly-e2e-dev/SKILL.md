@@ -1,17 +1,17 @@
 ---
 name: polly-e2e-dev
-description: End-to-end test the polly multi-agent coding orchestrator's critical user journeys (CUJs). Two halves — a deterministic mock-LLM driver (polly_cuj.py) that boots a throwaway local server + mock LLM and asserts the substrate (boot, bridged sys_* tool dispatch, the blast_radius / spawn_bounds / headless_subagent_purpose_guard guardrails, fan-out delegation), and a live real-CLI recipe (real claude/codex/pi, real worktrees/PRs) for polly's actual judgment. Load when developing, testing, or debugging examples/polly — its config.yaml, the claude_code/codex/pi sub-agents, the investigate/fanout/cross-review skills, or the omnigent.inner.nessie.policies guardrails — or reproducing a polly orchestration bug.
+description: End-to-end test the polly multi-agent coding orchestrator's critical user journeys (CUJs). Two halves — a deterministic mock-LLM driver (polly_cuj.py) that boots a throwaway local server + mock LLM and asserts the substrate (boot, bridged sys_* tool dispatch, the blast_radius / spawn_bounds / headless_subagent_purpose_guard guardrails, fan-out delegation), and a live real-CLI recipe (real claude/codex/opencode/agy, real worktrees/PRs) for polly's actual judgment. Load when developing, testing, or debugging examples/polly — its config.yaml, the claude_code/codex/opencode/agy sub-agents, the investigate/fanout/cross-review skills, or the omnigent.inner.nessie.policies guardrails — or reproducing a polly orchestration bug.
 ---
 
 # polly orchestrator: end-to-end CUJ dev & testing
 
 `polly` (`examples/polly/`) is a multi-agent **coding orchestrator**: a
-`claude-sdk` "brain" that writes no code itself and delegates everything to three
-coding sub-agents — `claude_code` (claude-native), `codex` (codex-native), and
-`pi` (headless, multi-model). Its critical user journeys are orchestration
+`claude-sdk` "brain" that writes no code itself and delegates everything to four
+coding sub-agents — `claude_code` (claude-native), `codex` (codex-native),
+`opencode` (opencode-native), and `agy` (antigravity-native). Its critical user journeys are orchestration
 behaviors, not single-turn answers:
 
-- **roster preflight** — first turn runs `command -v claude codex pi`, routes
+- **roster preflight** — first turn runs `command -v claude codex opencode agy`, routes
   only to workers whose CLI resolved.
 - **investigate** — read-only work fanned to `explore`/`search` sub-agents;
   synthesize from their reports.
@@ -30,7 +30,7 @@ This skill tests those CUJs two ways. Use **both** — they cover different thin
 | Half | What it proves | Needs |
 |------|----------------|-------|
 | **Mock loop** (`polly_cuj.py`) | The **substrate/mechanics** — the brain is *scripted*, so this proves bundle load, server-side policy resolution, bridged `sys_*` tool dispatch, the guardrail DENYs, and fan-out — deterministically, with no creds | nothing (mock LLM) |
-| **Live recipe** | polly's **judgment** — does the real brain preflight, decompose, delegate, cross-review, and pull in the human correctly | real `claude`/`codex`/`pi` + model creds + network |
+| **Live recipe** | polly's **judgment** — does the real brain preflight, decompose, delegate, cross-review, and pull in the human correctly | real `claude`/`codex`/`opencode`/`agy` + model creds + network |
 
 > Like the sibling harness skills, turns run from your **current checkout**
 > (`omni run <bundle> --server <url>` = local runner + remote server), so testing
@@ -100,7 +100,7 @@ right vendor, cross-reviews). That is the live recipe.
 
 ---
 
-## Part B — the live recipe (real claude/codex/pi)
+## Part B — the live recipe (real claude/codex/opencode/agy)
 
 ### Prereqs (check first)
 
@@ -109,7 +109,7 @@ right vendor, cross-reviews). That is the live recipe.
    a Databricks default). Verify booleans only — never print keys.
 3. **Worker CLIs on PATH** — this *is* the roster preflight:
    ```bash
-   command -v claude codex pi || true
+   command -v claude codex opencode agy || true
    ```
    A worker is launchable only if its binary resolved. Cross-review needs **two
    different vendors** available.
@@ -179,14 +179,14 @@ side effects.
   marker — match on that plus a policy-specific reason fragment (the driver does).
 - **Live fan-out needs the worker CLIs.** In the mock loop, sub-agents are
   rewritten to `openai-agents` so a dispatch needs no binary. Live, a missing
-  `claude`/`codex`/`pi` makes that worker fail to boot — treat it as UNAVAILABLE.
+  `claude`/`codex`/`opencode`/`agy` makes that worker fail to boot — treat it as UNAVAILABLE.
 - **Default server gotcha.** `config.yaml`'s `server:` points at a remote deploy;
   always pass `--server "$SERVER"` for local testing.
 
 ## Code & tests
 
 - **Bundle / prompt / guardrails:** `examples/polly/config.yaml`
-- **Sub-agents:** `examples/polly/agents/{claude_code,codex,pi}/config.yaml`
+- **Sub-agents:** `examples/polly/agents/{claude_code,codex,opencode,agy}/config.yaml`
 - **Orchestration skills:** `examples/polly/skills/{investigate,fanout,cross-review}/SKILL.md`
 - **Guardrail policies:** `omnigent/inner/nessie/policies.py`
 - **Runner-side gate:** `omnigent/runner/policy.py`; server-side tool-call

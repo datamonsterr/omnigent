@@ -247,6 +247,7 @@ describe("Custom agents settings", () => {
   it("updates search results when the term or loaded pages change", async () => {
     vi.mocked(authenticatedFetch).mockImplementation(async (input) => {
       const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/v1/account-pools") return response({ data: [] });
       if (url.searchParams.get("scope") !== "user") return response(page([polly]));
       return response(
         url.searchParams.has("after")

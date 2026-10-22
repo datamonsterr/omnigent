@@ -172,6 +172,26 @@ describe("smartRoutingUnavailableReason", () => {
 });
 
 describe("smartRoutingSourceFor", () => {
+  it("lets a catalog router answer off gateway", () => {
+    expect(
+      smartRoutingSourceFor({
+        externalConfigured: true,
+        externalRequiresGateway: false,
+        ossConfigured: false,
+        gatewayBacked: false,
+      }),
+    ).toBe("external-router");
+    expect(
+      smartRoutingUnavailableReason({
+        routingEnabled: true,
+        wrappersRegistered: true,
+        unreadyHarnesses: [],
+        externalRoutingAvailable: true,
+        externalRequiresGateway: false,
+        notGatewayBackedHarnesses: [...SMART_ROUTING_ARMS],
+      }),
+    ).toBeNull();
+  });
   // The full truth table of the three booleans. The external AI-Gateway router
   // wins whenever it can answer (the family is on the gateway); the built-in
   // judge is the fallback and needs no gateway backing at all.

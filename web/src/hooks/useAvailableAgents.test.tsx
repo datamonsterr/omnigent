@@ -1527,3 +1527,43 @@ describe("useAvailableAgents user agents (scope=user)", () => {
     expect(fetchMock.mock.calls.some(([url]) => url === USER_AGENTS_URL)).toBe(true);
   });
 });
+
+describe("deployment picker exclusions", () => {
+  it("hides exact IDs from catalog, user and discovered choices including placeholders and pins", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        data: [
+          { id: "retired-catalog", name: "retired", builtin: false },
+          { id: "keep", name: "retired", builtin: true },
+        ],
+      }),
+      [MINE_URL]: sessionResponse({ data: [{ id: "retired-session", name: "session-only" }] }),
+      ["/v1/agents?scope=user&limit=50"]: mockResponse({
+        data: [{ id: "retired-user", name: "user-only" }],
+      }),
+      [HARNESSES_URL]: mockResponse({ data: [] }),
+    });
+    const { result } = renderHook(
+      () => ({ ...useAvailableAgents({ pinnedAgentIds: ["retired-catalog"] }) }),
+      {
+        wrapper: ({ children }) =>
+          wrapper({
+            children: (
+              <CapabilitiesProvider
+                info={{
+                  ...FALLBACK_SERVER_INFO,
+                  agent_install: true,
+                  agent_picker_exclude_ids: ["retired-catalog", "retired-session", "retired-user"],
+                }}
+              >
+                {children}
+              </CapabilitiesProvider>
+            ),
+          }),
+      },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => expect(result.current.isPlaceholderData).toBe(false));
+    expect(result.current.data?.map((agent) => agent.id)).toEqual(["keep"]);
+  });
+});

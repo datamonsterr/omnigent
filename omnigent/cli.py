@@ -395,9 +395,9 @@ def _build_routing_backends(
 ) -> Any:  # type: ignore[explicit-any]  # RoutingBackends
     """Build BOTH routing backends from configuration alone — no opt-in env needed.
 
-    They are not alternatives. The external client's picks are Unity Gateway catalog
-    ids, so a harness whose inference runs off something else is served by the
-    built-in judge instead (see :mod:`omnigent.server.routing_backend`).
+    They are not alternatives. External routers with required gateway menus
+    need gateway-backed inference; generic external providers and the built-in
+    judge use the caller's catalog (see :mod:`omnigent.server.routing_backend`).
 
     An explicit ``routing:`` block chooses the external side by ``provider``:
 
@@ -2084,6 +2084,7 @@ def cli() -> None:
 # Keep in sync with ``@cli.command()`` decorations below.
 _CLICK_SUBCOMMANDS: frozenset[str] = frozenset(
     {
+        "accounts",
         "agent",
         "agy",
         "antigravity",

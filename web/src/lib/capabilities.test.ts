@@ -198,6 +198,13 @@ describe("resolveServerInfo request_managed_sandbox_host_id", () => {
 });
 
 describe("resolveServerInfo smart_routing_sources", () => {
+  it.each([false, true, undefined, null, "false"])(
+    "only an explicit false relaxes the external gateway requirement (%s)",
+    async (value) => {
+      const parsed = await probe({ smart_routing_external_requires_gateway: value });
+      expect(parsed.smart_routing_external_requires_gateway).toBe(value !== false);
+    },
+  );
   it("reads an explicit field verbatim", async () => {
     const parsed = await probe({
       smart_routing_enabled: true,

@@ -394,3 +394,14 @@ def test_family_tokens_survive_normalization_in_both_directions(harness: str, mo
     assert model_family_mismatch(harness, localized) is None
     # The strip direction round-trips to the original canonical id.
     assert normalize_model_for_provider(localized, "key") == model
+
+
+@pytest.mark.parametrize("harness", ["claude-native", "claude-sdk", "native-claude", "claude"])
+@pytest.mark.parametrize("alias", ["sonnet", "haiku", "opus"])
+def test_claude_family_aliases_are_compatible(harness: str, alias: str) -> None:
+    """Bare family aliases pass without admitting unrelated model families."""
+    assert model_family_mismatch(harness, alias) is None
+    assert model_family_mismatch(harness, "claude-" + alias) is None
+    assert model_family_mismatch(harness, "gpt-5.4") is not None
+    assert model_family_mismatch("codex-native", alias) is not None
+    assert model_family_mismatch("codex-native", "claude-" + alias) is not None

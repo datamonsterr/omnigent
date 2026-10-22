@@ -10506,17 +10506,13 @@ def _gateway_backed(host: Host | None, harnesses: Sequence[str]) -> bool:
     return not _ungatewayed_native_harnesses(host, harnesses)
 
 
-def _oss_routing_available(caps: Any = None) -> bool:  # type: ignore[explicit-any]
-    """Whether the built-in judge can answer for a harness off the gateway.
-
-    The fallback source: with it configured, an ungatewayed pane still routes
-    (with a smaller candidate set), so the refusals below only fire when this
-    is unavailable too.
+def _off_gateway_routing_available(caps: Any = None) -> bool:  # type: ignore[explicit-any]
+    """Whether a router can answer using an ungatewayed pane's own catalog.
 
     :param caps: A ``RuntimeCaps``-shaped object. ``None`` reads the globals.
-    :returns: ``True`` when a built-in routing client is configured.
+    :returns: ``True`` when a catalog router or built-in judge is available.
     """
-    from omnigent.server.routing_backend import backends_from_caps
+    from omnigent.server.routing_backend import backends_from_caps, select_router
 
     if caps is None:
         try:
@@ -10524,7 +10520,7 @@ def _oss_routing_available(caps: Any = None) -> bool:  # type: ignore[explicit-a
         except ImportError:
             return False
         caps = _caps
-    return backends_from_caps(caps).local is not None
+    return select_router(backends_from_caps(caps), gateway_backed=False) is not None
 
 
 def _external_router_usable(caps: Any = None) -> bool:  # type: ignore[explicit-any]
@@ -10672,9 +10668,8 @@ async def _reject_ungatewayed_model_routing(
     """Reject a routing-on create no router can serve.
 
     A pane off the Unity Gateway cannot run the workspace router's picks, but the
-    built-in judge names models from the pane's own catalog, so it can. This
-    only refuses when neither source is available — otherwise the create
-    proceeds and the built-in judge answers.
+    built-in judge and generic external providers use the pane's own catalog.
+    This only refuses when no eligible source is available.
 
     Children and sub-agent sessions are routed by the spawn/turn paths in their
     parent's family, so they are left to those gates.
@@ -10685,8 +10680,8 @@ async def _reject_ungatewayed_model_routing(
     :param agent: The bound agent row.
     :param agent_cache: Cache for loading the agent's parsed spec.
     :returns: None when the create may proceed.
-    :raises OmnigentError: 400 when the harness is not AI-Gateway-backed AND
-        the server has no built-in routing model to fall back on.
+    :raises OmnigentError: 400 when the harness is not AI-Gateway-backed and
+        the server has no eligible catalog router or built-in judge.
     :raises HTTPException: 404/403 from resolving ``body.host_id``.
     """
     from omnigent.server.smart_routing import AUTO_NATIVE_ROUTING_HARNESSES
@@ -10700,9 +10695,8 @@ async def _reject_ungatewayed_model_routing(
     )
     if harness not in AUTO_NATIVE_ROUTING_HARNESSES:
         return
-    # The built-in judge routes off the pane's own catalog, so it reaches an
-    # ungatewayed harness the workspace router cannot. Check it before refusing.
-    if _oss_routing_available():
+    # Catalog routers and the built-in judge can serve ungatewayed panes.
+    if _off_gateway_routing_available():
         return
     host = await _routing_host_for_create(body, request, user_id)
     if not _ungatewayed_native_harnesses(host, (harness,)):
@@ -11009,9 +11003,8 @@ async def _resolve_fixed_native_model_routing(
     from omnigent.server.smart_routing import models_in_family, route_session_harness
 
     host = await _routing_host_for_create(body, request, user_id)
-    # Off the gateway the built-in judge answers, and the static table's
-    # ``databricks-*`` ids are unreachable — the host's pre-launch catalog is the
-    # only provider-accurate candidate source.
+    # Off the gateway only the host's pre-launch catalog is provider-accurate;
+    # the static table's ``databricks-*`` ids are unreachable.
     backed = _gateway_backed(host, (harness,))
     _harness, model, verdict, error = await route_session_harness(
         body.smart_routing_message or "",
@@ -11080,13 +11073,10 @@ async def _resolve_native_smart_routing(
     )
 
     host = await _routing_host_for_create(body, request, user_id)
-    # Both arms must be gateway-backed before the WORKSPACE router may choose
-    # between them: an arm off the gateway cannot run its picks, and the pick is
-    # made after the create commits, so there is no safe half-menu. That only
-    # ends the create when the built-in judge is unavailable too — it names
-    # models from each arm's own pre-launch catalog, which every arm can run.
+    # Required gateway menus cannot serve an off-gateway arm. Catalog routers
+    # and the built-in judge can use each arm's own pre-launch model list.
     ungatewayed = _ungatewayed_native_harnesses(host, AUTO_NATIVE_ROUTING_HARNESSES)
-    if ungatewayed and not _oss_routing_available():
+    if ungatewayed and not _off_gateway_routing_available():
         return None, None, None, _ungatewayed_auto_routing_error(ungatewayed)
     backed = not ungatewayed
     installed = _installed_native_harnesses(host)
@@ -11854,7 +11844,8 @@ async def _create_session_from_existing_agent(
             initial_labels.update(repl_labels)
 
     # Forward custom codex_home or gemini_dir from agent spec config/labels
-    # so runner terminals isolate correctly.
+    # so runner terminals isolate correctly. A requested account outranks
+    # those saved homes and supplies its own home during account assignment.
     spec_for_env = sub_spec or own_spec or selection_spec
     if spec_for_env is not None and not (
         initial_labels.get("omnigent.account.id") or initial_labels.get("account_id")
@@ -12278,6 +12269,19 @@ def _create_session_from_bundle(
 
     if _spec_harness(spec) == "acp" and not configured_snapshot(inference_snapshot):
         _validate_acp_spec_models(spec)
+
+    from omnigent.account_pools.labels import ACCOUNT_ID_LABEL_KEY, LEGACY_ACCOUNT_ID_LABEL_KEY
+
+    labels = dict(metadata.labels or {})
+    configured_account = spec.executor.config.get("account_id")
+    if (
+        isinstance(configured_account, str)
+        and configured_account
+        and not labels.get(ACCOUNT_ID_LABEL_KEY)
+        and not labels.get(LEGACY_ACCOUNT_ID_LABEL_KEY)
+    ):
+        labels[ACCOUNT_ID_LABEL_KEY] = configured_account
+        metadata = metadata.model_copy(update={"labels": labels})
 
     if metadata.reasoning_effort is None and spec.executor.reasoning_effort is not None:
         _, seeded_effort = validate_session_model_metadata(

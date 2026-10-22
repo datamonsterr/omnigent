@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { fireEvent, userEvent, within } from "storybook/test";
 import { StoryQueryRouter } from "@/storybook/StoryProviders";
+import { accountPoolsKey } from "@/hooks/useAccountPools";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 
 const harnessCatalog = {
@@ -23,7 +24,10 @@ const meta = {
   decorators: [
     (Story) => (
       <StoryQueryRouter
-        seed={(queryClient) => queryClient.setQueryData(["harness-labels"], harnessCatalog)}
+        seed={(queryClient) => {
+          queryClient.setQueryData(["harness-labels"], harnessCatalog);
+          queryClient.setQueryData(accountPoolsKey(30), []);
+        }}
       >
         <Story />
       </StoryQueryRouter>

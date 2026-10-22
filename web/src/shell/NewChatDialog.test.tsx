@@ -21,8 +21,11 @@ import { useConversations as useTestConversations } from "@/hooks/useConversatio
 
 vi.mock("@/hooks/useSidebarData", () => ({ useLoadedConversations: () => useTestConversations() }));
 import { useSkills } from "@/hooks/useSkills";
+import { useAccountPools } from "@/hooks/useAccountPools";
 
 vi.mock("@/hooks/useSkills", () => ({ useSkills: vi.fn() }));
+// Account fetching has its own component tests; keep create-request assertions isolated.
+vi.mock("@/hooks/useAccountPools", () => ({ useAccountPools: vi.fn() }));
 import type * as IdentityModule from "@/lib/identity";
 import type * as UseConversationsModule from "@/hooks/useConversations";
 import type * as UseSkillsModule from "@/hooks/useSkills";
@@ -172,8 +175,6 @@ describe("ComposerAddMenu", () => {
 });
 
 // Keep transport helpers real; each test controls the resolved user and create POST.
-// No account pools: the pool read would otherwise consume the create-request mocks.
-vi.mock("@/hooks/useAccountPools", () => ({ useAccountPools: () => ({ data: [] }) }));
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
   authenticatedFetch: vi.fn(),
@@ -1181,6 +1182,12 @@ function mockModelQueries(
 // directory-session / runner-health / filesystem stubs, and a persisted
 // recent workspace so the working-directory field seeds to a known path.
 function setupLandingMocks() {
+  vi.mocked(useAccountPools).mockReturnValue({
+    data: [],
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  } as unknown as ReturnType<typeof useAccountPools>);
   authenticatedFetchMock.mockReset();
   getCurrentUserIdMock.mockReset();
   getCurrentUserIdMock.mockReturnValue(null);
@@ -4666,6 +4673,26 @@ describe("NewChatLandingScreen", () => {
       }
     },
   );
+
+  it("omits Antigravity Edit when it has no models or accounts", () => {
+    const native = NATIVE_CODING_AGENTS.find((candidate) => candidate.key === "antigravity")!;
+    const agentId = "a_antigravity";
+    mockAgents([
+      testAgent(agentId, native.agentName, {
+        display_name: native.displayName,
+        harness: native.harness,
+      }),
+    ]);
+    mockModelQueries(() => ({ ...SUCCESS_QUERY_STATE, data: [] }));
+
+    renderLanding();
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
+    if (screen.queryByTestId(`new-chat-landing-agent-${agentId}`) == null) {
+      fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
+    }
+
+    expect(screen.queryByTestId(`new-chat-landing-agent-config-${agentId}`)).toBeNull();
+  });
 
   it.each(["cursor", "antigravity", "opencode"])(
     "keeps model settings editable after selecting %s",
@@ -10470,6 +10497,25 @@ describe("NewChatLandingScreen Smart Routing harness row", () => {
     openPicker();
     expect(screen.getByTestId(SMART_ROUTING_ROW)).toBeTruthy();
   });
+
+  it.each([false, true])(
+    "offers native Auto off gateway with a catalog router (judge %s)",
+    (oss) => {
+      mockHosts([
+        {
+          ...host("online"),
+          gateway_inference: { "claude-native": false, "codex-native": false },
+        } as Host,
+      ]);
+      renderLanding({
+        smart_routing_enabled: true,
+        smart_routing_sources: { external: true, oss },
+        smart_routing_external_requires_gateway: false,
+      });
+      openPicker();
+      expect(screen.getByTestId(SMART_ROUTING_ROW)).toBeTruthy();
+    },
+  );
 
   // Neither source: the row goes, same as judge-only.
   it("hides the row and its separator when the server reports neither source", () => {

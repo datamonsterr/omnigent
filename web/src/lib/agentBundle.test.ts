@@ -109,6 +109,21 @@ describe("buildAgentBundle", () => {
     expect(yaml).toContain("  config:\n    harness: codex\n    account_id: codex-acc2\n");
   });
 
+  it("persists an account pin in executor config and omits Auto", async () => {
+    const input = {
+      name: "account-agent",
+      harness: "codex-native",
+      model: "test-model",
+      accountId: "codex-acc5",
+    };
+    expect(await extractConfigYaml(await buildAgentBundle(input))).toContain(
+      "    account_id: codex-acc5",
+    );
+    expect(
+      await extractConfigYaml(await buildAgentBundle({ ...input, accountId: null })),
+    ).not.toContain("account_id:");
+  });
+
   it("includes description when provided", async () => {
     const input: AgentBundleInput = {
       name: "my-agent",
