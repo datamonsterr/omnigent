@@ -48,6 +48,11 @@ allowed_domains:
 # copy_max_files: 20
 # copy_max_total_bytes: 268435456
 
+# Automatic Codex account choice. `load_first` is the compatibility default:
+# fewest active sessions, then known quota. Use `quota_first` to prefer fresh
+# usable quota before session load. Explicit session and agent pins still win.
+codex_account_selection_policy: load_first
+
 # Branding / white-labeling. Customize the app name, landing heading, and
 # logos shown in the web UI. Logo files must live under branding-assets/ beside
 # this config file; served pre-auth so the login screen is branded too. Any unset
