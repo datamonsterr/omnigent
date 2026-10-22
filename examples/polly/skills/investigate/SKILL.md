@@ -20,10 +20,11 @@ repository-specific technical question.
    when the task is primarily external/document search. Prefer a different-vendor
    implementer when an independent lens is wanted (e.g. `agy` for a Gemini
    perspective, or `opencode` for a third implementer view). Any worker takes an optional
-   `args.model` (`sys_list_models` shows what each worker can run; an invalid
-   model/worker combination fails loud at dispatch, and `model` only applies on
-   the dispatch that CREATES the session — a send that continues an existing
-   title rejects it).
+   `args.model`. Use polly's native catalog preflight for `opencode` and `agy`;
+   shared `sys_list_models` may be empty or unsupported for those harnesses.
+   An invalid model/worker combination fails loud at dispatch, and `model` only
+   applies on the dispatch that CREATES the session — a send that continues an
+   existing title rejects it.
    Tell the worker to edit nothing and return file,
    command, URL, or line evidence. Emit these `sys_session_send` calls in the
    SAME turn — do not end a turn having only said you will dispatch.

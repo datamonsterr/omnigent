@@ -26,10 +26,11 @@ anyone needs to read through.
    exact file set/command/commit the implementer reported. Never use
    `grep -c 'def test_'` as a pytest count: it counts functions, not collected
    cases, and misses parametrized case expansion.
-3. Dispatch a DIFFERENT-vendor sub-agent as reviewer: pick any AVAILABLE worker
-   whose vendor differs from the implementer's — `claude_code`, `codex`,
-   `opencode`, or `agy` (e.g. Claude built it → any of
-   `codex` / `opencode` / `agy`, and so on). Use a
+3. Dispatch a DIFFERENT-vendor sub-agent as reviewer: pick an AVAILABLE worker
+   whose actual model vendor differs from the implementer's. Follow polly's
+   native catalog preflight and model selection rules: AGY Claude cannot
+   independently review `claude_code`; AGY Gemini can. OpenCode's selected
+   model vendor also determines independence, not its harness name. Use a
    task-based title such as `review-auth-refactor`, never the raw vendor name:
    `sys_session_send(agent="claude_code"|"codex"|"opencode"|"agy", title="review-<task_slug>",
    args={purpose: "review", input: "Read the diff at <absolute shared diff path>
