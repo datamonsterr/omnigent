@@ -181,6 +181,8 @@ export interface ServerInfo {
    * ``smart_routing_enabled``.
    */
   smart_routing_sources: SmartRoutingSources;
+  /** Absent on older servers, whose external router requires gateway inference. */
+  smart_routing_external_requires_gateway?: boolean;
   /**
    * True when the server keeps a harness account inventory (database-backed
    * account pools). Absent on older servers, which clients treat as "no
@@ -407,6 +409,8 @@ export async function resolveServerInfo(): Promise<ServerInfo> {
           public_sharing_max_level: data.public_sharing_max_level === "edit" ? "edit" : "read",
           server_version: typeof data.server_version === "string" ? data.server_version : null,
           smart_routing_enabled: smartRoutingEnabled,
+          smart_routing_external_requires_gateway:
+            data.smart_routing_external_requires_gateway !== false,
           smart_routing_sources: parseSmartRoutingSources(
             data.smart_routing_sources,
             smartRoutingEnabled,

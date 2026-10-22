@@ -19,7 +19,7 @@ export interface RoutingDecisionExtras {
   rawModel?: string | null;
   /** Model the spawn asked for and the router overrode, when there was one. */
   attemptedOverride?: string | null;
-  /** Which router answered — `"databricks-aigw"` or `"oss-llm"`; absent on legacy rows. */
+  /** Which router answered; absent on legacy rows. */
   routerSource?: string | null;
   /**
    * Human label of the task the decision governed, e.g. `"Research auth

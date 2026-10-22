@@ -84,6 +84,30 @@ def test_any_prefers_the_external_client() -> None:
     assert RoutingBackends().any() is None
 
 
+@pytest.mark.parametrize(
+    ("router_name", "menus", "external_eligible"),
+    [
+        ("task_v0", None, True),
+        ("task_v1", None, False),
+        ("custom", {"both": ["gateway-only-arm"]}, False),
+    ],
+)
+def test_required_menus_keep_external_routing_gateway_only(
+    router_name: str,
+    menus: dict[str, list[str]] | None,
+    external_eligible: bool,
+) -> None:
+    from omnigent.server.smart_routing import ExternalRoutingClient
+
+    external = ExternalRoutingClient(
+        base_url="https://router.example.invalid/v1", router_name=router_name, menus=menus
+    )
+    choice = select_router(RoutingBackends(external=external, local=_LOCAL), gateway_backed=False)
+    assert choice is not None
+    assert choice.client is (external if external_eligible else _LOCAL)
+    assert choice.source == ("external-router" if external_eligible else "oss-llm")
+
+
 # ── gateway_backs_all: both families must be backed ─────────────────────────
 #
 # The map is read from the live host registry — reported on the host's connect
@@ -395,6 +419,32 @@ async def test_route_with_fallback_uses_the_judge_off_the_gateway() -> None:
     )
     assert call is not None
     assert (call.source, external.calls) == ("oss-llm", 0)
+
+
+@pytest.mark.parametrize("status", [401, 503])
+async def test_generic_external_failure_falls_back_off_the_gateway(
+    respx_mock: Any, status: int
+) -> None:
+    import httpx
+
+    from omnigent.server.smart_routing import ExternalRoutingClient
+
+    external = ExternalRoutingClient(
+        base_url="https://router.example.invalid/v1", router_name="task_v0", auth_provider=dict
+    )
+    request = respx_mock.post("https://router.example.invalid/v1/routes:select").mock(
+        return_value=httpx.Response(status)
+    )
+    local = _Recording(_VERDICT)
+    call = await route_with_fallback(
+        RoutingBackends(external=external, local=local),
+        "hi",
+        {"codex-native": ["gpt-5-5"]},
+        gateway_backed=False,
+    )
+    assert call is not None
+    assert (call.result, call.source, call.client) == (_VERDICT, "oss-llm", local)
+    assert request.call_count == 1
 
 
 async def test_route_with_fallback_reports_an_unconfigured_deployment() -> None:

@@ -327,6 +327,30 @@ async def test_info_reports_routing_on_for_a_backends_only_deployment(
     assert data["smart_routing_sources"] == {"external": True, "oss": False}
 
 
+@pytest.mark.parametrize(
+    ("router_name", "requires_gateway"), [("task_v0", False), ("task_v1", True)]
+)
+async def test_info_advertises_external_router_gateway_requirement(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    router_name: str,
+    requires_gateway: bool,
+) -> None:
+    from omnigent.server.routing_backend import RoutingBackends
+    from omnigent.server.smart_routing import ExternalRoutingClient
+
+    external = ExternalRoutingClient(
+        base_url="https://router.example.invalid", router_name=router_name
+    )
+    monkeypatch.setattr(
+        "omnigent.runtime._globals._caps",
+        SimpleNamespace(routing_backends=RoutingBackends(external=external)),
+    )
+    response = await client.get("/v1/info")
+    assert response.status_code == 200
+    assert response.json()["smart_routing_external_requires_gateway"] is requires_gateway
+
+
 async def test_info_classifies_a_legacy_single_routing_client_as_the_oss_judge(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

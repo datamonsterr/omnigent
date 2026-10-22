@@ -10466,6 +10466,25 @@ describe("NewChatLandingScreen Smart Routing harness row", () => {
     expect(screen.getByTestId(SMART_ROUTING_ROW)).toBeTruthy();
   });
 
+  it.each([false, true])(
+    "offers native Auto off gateway with a catalog router (judge %s)",
+    (oss) => {
+      mockHosts([
+        {
+          ...host("online"),
+          gateway_inference: { "claude-native": false, "codex-native": false },
+        } as Host,
+      ]);
+      renderLanding({
+        smart_routing_enabled: true,
+        smart_routing_sources: { external: true, oss },
+        smart_routing_external_requires_gateway: false,
+      });
+      openPicker();
+      expect(screen.getByTestId(SMART_ROUTING_ROW)).toBeTruthy();
+    },
+  );
+
   // Neither source: the row goes, same as judge-only.
   it("hides the row and its separator when the server reports neither source", () => {
     mockHosts([

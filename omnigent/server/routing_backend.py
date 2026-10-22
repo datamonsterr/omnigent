@@ -2,13 +2,15 @@
 
 Smart Routing has two possible backends. The external ``task_v1`` client rewrites
 a launch's model to a Databricks Unity Gateway catalog id, so it can only serve a
-harness whose inference is gateway-backed. The built-in OSS judge
-(:class:`~omnigent.server.smart_routing.LLMRoutingClient`) names models from the
+harness whose inference is gateway-backed. Generic external routers without
+required arm menus use the caller's catalog and can serve any harness. The
+built-in OSS judge (:class:`~omnigent.server.smart_routing.LLMRoutingClient`)
+names models from the
 candidate menu it is handed, so it serves any harness.
 
-Gateway backing therefore selects the SOURCE rather than hiding the surface: an
-off-gateway pane still routes, just with the built-in judge, and the decision
-records which router answered so the UI can say so.
+Gateway backing restricts routers with required menus rather than hiding the
+surface: an off-gateway pane can use a catalog router or the built-in judge.
+The decision records which router answered so the UI can say so.
 
 The same holds when the preferred router FAILS: :func:`route_with_fallback`
 asks the judge behind it rather than declining the call, which is what keeps a
@@ -28,9 +30,9 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-#: Which router produced a decision. ``"databricks-aigw"`` is the external
-#: ``task_v1`` service; ``"oss-llm"`` is the built-in judge.
-RouterSource = Literal["databricks-aigw", "oss-llm"]
+#: Which router produced a decision. ``"databricks-aigw"`` is the gateway
+#: ``task_v1`` service; ``"external-router"`` is a generic external provider.
+RouterSource = Literal["databricks-aigw", "external-router", "oss-llm"]
 
 
 @dataclass(frozen=True)
@@ -82,7 +84,7 @@ class RouterChoice:
     """A selected router and the source name to stamp on its decision.
 
     :param client: The routing client to call.
-    :param source: Which source *client* is, e.g. ``"databricks-aigw"``.
+    :param source: Which source client is, e.g. ``"external-router"``.
     """
 
     client: RoutingClient
@@ -98,14 +100,21 @@ def select_router(
 
     :param backends: The deployment's configured clients.
     :param gateway_backed: Whether EVERY harness family involved in this call
-        resolves AI-Gateway-backed inference. False takes the external client
-        out of play — its picks are gateway catalog ids the pane cannot reach.
+        resolves AI-Gateway-backed inference. False excludes external clients
+        requiring gateway inference; catalog-only clients remain eligible.
     :returns: The chosen client plus its source, or ``None`` when neither
         backend can serve (today's "routing unavailable").
     """
     external = usable_external(backends)
-    if gateway_backed and external is not None:
-        return RouterChoice(client=external, source="databricks-aigw")
+    if external is not None and (
+        gateway_backed or not getattr(external, "requires_gateway_inference", True)
+    ):
+        source: RouterSource = (
+            "databricks-aigw"
+            if getattr(external, "requires_gateway_inference", True)
+            else "external-router"
+        )
+        return RouterChoice(client=external, source=source)
     if backends.local is not None:
         return RouterChoice(client=backends.local, source="oss-llm")
     return None
@@ -154,7 +163,7 @@ async def route_with_fallback(
     choice = select_router(backends, gateway_backed=gateway_backed)
     if choice is None:
         return None
-    if choice.source != "databricks-aigw" or backends.local is None:
+    if choice.client is not backends.external or backends.local is None:
         return RoutedCall(
             result=await choice.client.route(message, available_models),
             source=choice.source,
@@ -169,7 +178,7 @@ async def route_with_fallback(
         )
     else:
         if result is not None:
-            return RoutedCall(result=result, source="databricks-aigw", client=choice.client)
+            return RoutedCall(result=result, source=choice.source, client=choice.client)
         _logger.info(
             "routing: the external router gave no verdict (%s); "
             "falling back to the built-in judge",

@@ -1308,6 +1308,21 @@ describe("routing decision — harness / scope / raw pick", () => {
     expect(screen.getByText(/"router_source"/)).toBeInTheDocument();
   });
 
+  it("card: identifies a generic external router without a gateway badge", () => {
+    render(
+      <RoutingDecisionCard
+        model="claude-opus-4-8"
+        applied
+        rationale="x"
+        routing={{ routerSource: "external-router" }}
+      />,
+    );
+    expect(screen.getByTestId("routing-decision-source-external")).toHaveTextContent(
+      "external router",
+    );
+    expect(screen.queryByTestId(AIGW_MARK)).toBeNull();
+  });
+
   it.each([
     ["the built-in judge answered", { routerSource: "oss-llm" }],
     ["the field is absent", {}],

@@ -1046,6 +1046,11 @@ export function RoutingDecisionCard({
             <DatabricksIcon className="size-3 shrink-0" />
           </span>
         ) : null}
+        {routerSource === "external-router" ? (
+          <span className="text-muted-foreground" data-testid="routing-decision-source-external">
+            · external router
+          </span>
+        ) : null}
         <span className="text-muted-foreground">{applied ? "· applied" : "· advisory"}</span>
         {harnessLabel ? (
           <span className="text-muted-foreground" data-testid="routing-decision-harness">
