@@ -54,9 +54,12 @@ dependency).
   `sys_cancel_task` with `task_id` set to the recorded `conversation_id` before
   dispatching a replacement. `claude_code` is hard-stopped; `codex` cancellation
   is best-effort until its runner-side hard-stop exists.
-- A sub-agent that returns a dark or failing result: don't re-prompt it in a
-  loop — re-dispatch a fresh implementation sub-agent in a clean worktree, or
-  escalate to the user.
+- For a dark or failing result, use polly's failure recovery rules: boot/auth
+  failures stay unavailable; model payment/quota failures get only the bounded
+  catalog-based recovery. Reuse a failed worktree only when its HEAD matches
+  the recorded starting commit and its tracked/untracked status is clean;
+  otherwise preserve it and use a clean worktree. Route or escalate when the
+  allowed recovery is exhausted; don't re-prompt in a loop.
 - Because polly never merges, cross-PR conflicts surface when the human merges,
   not here. Keeping each parallel task's file scope disjoint is what keeps that
   rare — honor it.
