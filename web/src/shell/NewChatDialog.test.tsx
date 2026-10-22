@@ -175,8 +175,6 @@ describe("ComposerAddMenu", () => {
 });
 
 // Keep transport helpers real; each test controls the resolved user and create POST.
-// No account pools: the pool read would otherwise consume the create-request mocks.
-vi.mock("@/hooks/useAccountPools", () => ({ useAccountPools: () => ({ data: [] }) }));
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
   authenticatedFetch: vi.fn(),
@@ -4675,6 +4673,26 @@ describe("NewChatLandingScreen", () => {
       }
     },
   );
+
+  it("omits Antigravity Edit when it has no models or accounts", () => {
+    const native = NATIVE_CODING_AGENTS.find((candidate) => candidate.key === "antigravity")!;
+    const agentId = "a_antigravity";
+    mockAgents([
+      testAgent(agentId, native.agentName, {
+        display_name: native.displayName,
+        harness: native.harness,
+      }),
+    ]);
+    mockModelQueries(() => ({ ...SUCCESS_QUERY_STATE, data: [] }));
+
+    renderLanding();
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-agent-select"), { button: 0 });
+    if (screen.queryByTestId(`new-chat-landing-agent-${agentId}`) == null) {
+      fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
+    }
+
+    expect(screen.queryByTestId(`new-chat-landing-agent-config-${agentId}`)).toBeNull();
+  });
 
   it.each(["cursor", "antigravity", "opencode"])(
     "keeps model settings editable after selecting %s",
