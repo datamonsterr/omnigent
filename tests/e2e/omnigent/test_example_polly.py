@@ -3,15 +3,16 @@
 polly is the standalone multi-agent coding orchestrator (successor to the
 deleted nessie example, whose deep structural pins were folded in here).
 Loads the bundle and asserts the distinctive wiring stays intact: the
-claude-sdk orchestrator brain, the four cross-vendor coding sub-agents
-(claude_code / codex / opencode / agy, which implement,
+claude-sdk orchestrator brain, the nine cross-vendor coding sub-agents
+(claude_code / claude_sonnet / claude_haiku / codex / opencode /
+opencode-minimax / opencode-glm / opencode-deepseek / agy, which implement,
 review, and explore),
 the three spine skills, and the bounds/blast-radius guardrails. Pure spec-load
 — no LLM, no credentials.
 
 What breaks if this fails:
 - the orchestrator substrate drifts (model / harness / context window),
-- a coding sub-agent is dropped or its harness changes (no implementers, or
+- a coding sub-agent is dropped or its harness changes (fewer implementers, or
   two collapse onto one vendor → cross-vendor review blind spot),
 - a spine skill is dropped or renamed (the strategy layer regresses),
 - a guardrail is removed (unbounded fan-out, or ungated push/deploy).
@@ -69,12 +70,19 @@ def test_orchestrator_executor(polly_spec: AgentSpec) -> None:
 
 def test_coding_subagents(polly_spec: AgentSpec) -> None:
     """
-    The bundle has exactly four coding sub-agents: ``claude_code`` (claude-native),
-    ``codex`` (codex-native), ``opencode`` (opencode-native), and ``agy``
-    (antigravity-native) on the native terminal harnesses. All implement,
-    review, and explore. The native
-    harnesses render terminal-first (Chat / Terminal pill) so the human can
-    watch or take over.
+    The bundle has exactly nine coding sub-agents: ``claude_code`` /
+    ``claude_sonnet`` / ``claude_haiku`` (claude-native), ``codex``
+    (codex-native), ``opencode`` / ``opencode-minimax`` / ``opencode-glm`` /
+    ``opencode-deepseek`` (opencode-native), and ``agy`` (antigravity-native) on
+    the native terminal harnesses. All implement, review, and explore. The
+    native harnesses render terminal-first (Chat / Terminal pill) so the human
+    can watch or take over.
+
+    The five pinned workers carry their model in ``executor.model``:
+    claude_sonnet / claude_haiku pin their Claude ids, and the opencode-*
+    workers pin provider/model ids verified against ``opencode models``.
+    The unpinned trio (claude_code / codex / opencode / agy) run their
+    harness default.
 
     A missing/renamed agent means fewer implementers, and same-vendor harnesses
     would break cross-vendor review — polly's differentiator.
@@ -83,21 +91,53 @@ def test_coding_subagents(polly_spec: AgentSpec) -> None:
     assert sorted(polly_spec.tools.agents) == [
         "agy",
         "claude_code",
+        "claude_haiku",
+        "claude_sonnet",
         "codex",
         "opencode",
+        "opencode-deepseek",
+        "opencode-glm",
+        "opencode-minimax",
     ]
     assert fam["claude_code"] == "claude-native"
+    assert fam["claude_sonnet"] == "claude-native"
+    assert fam["claude_haiku"] == "claude-native"
     assert fam["codex"] == "codex-native"
     assert fam["opencode"] == "opencode-native"
+    assert fam["opencode-minimax"] == "opencode-native"
+    assert fam["opencode-glm"] == "opencode-native"
+    assert fam["opencode-deepseek"] == "opencode-native"
     assert fam["agy"] == "antigravity-native"
-    # Four distinct vendors → any implementer's diff is reviewable by another.
+    # Nine workers share four harnesses (claude-native x3, codex, opencode
+    # x4, antigravity) — several workers per harness key, per the roster
+    # preflight. Review independence is by MODEL vendor family, not harness:
+    # Worker aliases select pins; review independence uses the resolved model
+    # and vendor metadata after routing and args.model overrides.
     assert len(set(fam.values())) == 4
-    # Headless bypass knobs so workers don't stall on ApprovalCards.
+    # Each pinned worker's executor.model is pinned exactly as declared.
     by_name = {a.name: a for a in polly_spec.sub_agents}
+    assert by_name["claude_sonnet"].executor.model == "claude-sonnet-5-5"
+    assert by_name["claude_haiku"].executor.model == "claude-haiku-5-5"
+    assert by_name["opencode-minimax"].executor.model == "opencode/minimax-m3.1-flash-free"
+    assert by_name["opencode-glm"].executor.model == "opencode/glm-5.3-flash-free"
+    assert by_name["opencode-deepseek"].executor.model == "opencode/deepseek-v4.1-flash-free"
+    # Headless bypass knobs so workers don't stall on ApprovalCards.
     assert by_name["claude_code"].executor.config.get("permission_mode") == "auto"
+    assert by_name["claude_sonnet"].executor.config.get("permission_mode") == "auto"
+    assert by_name["claude_haiku"].executor.config.get("permission_mode") == "auto"
     assert by_name["claude_code"].executor.model is None
     assert by_name["codex"].executor.config.get("yolo") in (True, "True", "true")
-    for name in ("claude_code", "codex", "opencode", "agy"):
+    for name in (
+        "claude_code",
+        "claude_sonnet",
+        "claude_haiku",
+        "codex",
+        "opencode",
+        "opencode-minimax",
+        "opencode-glm",
+        "opencode-deepseek",
+        "agy",
+    ):
         prompt = (_POLLY_BUNDLE / "agents" / name / "config.yaml").read_text(encoding="utf-8")
         assert "IMPLEMENT — write real product code" in prompt
         assert "REVIEW — verify another agent's diff" in prompt
@@ -109,6 +149,34 @@ def test_polly_preflights_host_harness_readiness() -> None:
     assert "sys_session_get_info({})" in config
     assert "`configured_harnesses` map" in config
     assert config.index("configured_harnesses") < config.index("command -v")
+
+
+@pytest.mark.parametrize("relative_path", ["config.yaml", "skills/cross-review/SKILL.md"])
+def test_review_independence_uses_resolved_models(relative_path: str) -> None:
+    text = " ".join((_POLLY_BUNDLE / relative_path).read_text().split())
+    assert "actual resolved model" in text
+    assert "routing" in text and "args.model" in text
+    assert "Never infer independence from worker names or harnesses" in text
+    assert (
+        "`opencode-minimax` overridden to a Claude model cannot review a Claude-built diff"
+    ) in text
+    assert "unknown family cannot establish independence" in text
+    assert "fallback" in text and "sys_list_models" in text
+    assert "`opencode-minimax` counts as OpenCode" not in text
+    assert "trio all count as Claude" not in text
+
+
+def test_polly_dev_skill_tracks_roster_and_readiness(polly_spec: AgentSpec) -> None:
+    skill = _POLLY_BUNDLE.parents[1] / ".claude/skills/polly-e2e-dev/SKILL.md"
+    text = " ".join(skill.read_text().split())
+    assert "nine coding sub-agents" in text
+    for worker in polly_spec.sub_agents:
+        assert f"`{worker.name}`" in text
+    assert "configured_harnesses" in text
+    assert "exactly `true`" in text
+    assert "absent or `null`" in text
+    assert "actual resolved model" in text and "args.model" in text
+    assert "unknown family cannot establish independence" in text
 
 
 def test_spine_skills_present(polly_spec: AgentSpec) -> None:
@@ -147,7 +215,10 @@ def test_subagent_dispatch_text_advertises_task_titles_and_purpose(
     assert "Goal mode is opt-in for long-running IMPLEMENT dispatches" in config
     assert "one standalone `/goal <condition>` command" in config
     assert "do not invent a `sys_session_send` goal parameter" in config
-    assert "long-running `claude_code` or `codex` implementation" in fanout
+    assert (
+        "long-running `claude_code`, `claude_sonnet`, `claude_haiku`, or `codex` implementation"
+        in fanout
+    )
     assert "Do not use child goal mode for other workers" in fanout
     assert 'purpose: "implement"' in fanout
     assert 'title="<task_slug>"' in fanout
@@ -219,7 +290,17 @@ def test_polly_test_count_ground_truth_guidance() -> None:
     assert "miscount`, `over-report`, or `fabrication`" in config_compact
     assert "exact file set/command/commit" in cross_review_compact
 
-    for name in ("claude_code", "codex", "opencode", "agy"):
+    for name in (
+        "claude_code",
+        "claude_sonnet",
+        "claude_haiku",
+        "codex",
+        "opencode",
+        "opencode-minimax",
+        "opencode-glm",
+        "opencode-deepseek",
+        "agy",
+    ):
         worker = (_POLLY_BUNDLE / "agents" / name / "config.yaml").read_text(encoding="utf-8")
         worker_compact = " ".join(worker.split())
         assert "When you report test results, include the exact command and file set" in (
@@ -321,11 +402,14 @@ def test_investigation_skill_delegates_read_only_work() -> None:
     compact = " ".join(investigate.split())
 
     assert "Use for any read-only task: investigation, debugging, audit" in compact
+    assert "Dispatch each task to `claude_code`, `claude_sonnet`, " in compact
     assert (
-        "Dispatch each task to `claude_code`, `codex`, `opencode`, or `agy`: "
-        '`sys_session_send(agent="claude_code"|"codex"|"opencode"|"agy", '
+        '`sys_session_send(agent="claude_code"|"claude_sonnet"|"claude_haiku"'
+        '|"codex"|"opencode"|"opencode-minimax"|"opencode-glm"'
+        '|"opencode-deepseek"|"agy", '
         'title="explore-<task_slug>", '
-        'args={purpose: "explore", input: "<question + exact scope + evidence requested>"})`'
+        'args={purpose: "explore", '
+        'input: "<question + exact scope + evidence requested>"})`'
     ) in compact
     # The audited skill (#3074) made task-based titles mandatory at dispatch.
     assert (
@@ -369,7 +453,10 @@ def test_subagent_cancellation_guidance_present() -> None:
     assert (
         "`sys_cancel_task` with `task_id` set to the recorded `conversation_id`"
     ) in fanout_compact
-    assert "`claude_code` is hard-stopped" in fanout_compact
+    assert (
+        "The `claude-native` workers (`claude_code`, `claude_sonnet`, "
+        "`claude_haiku`) are hard-stopped" in fanout_compact
+    )
     assert "`codex` cancellation is best-effort" in fanout_compact
 
 
@@ -390,12 +477,27 @@ def test_orchestrator_guardrails(polly_spec: AgentSpec) -> None:
     dispatch_tools = spawn.function.arguments.get("dispatch_tools")
     assert dispatch_tools is not None
     assert "sys_session_send" in dispatch_tools  # sub-agent sends are bounded
+    # Nine workers (was four): a full parallel-safe wave can dispatch one
+    # IMPLEMENT per worker in a single turn, so the cap must fit 9 — 10
+    # leaves one spare for a same-turn auxiliary dispatch. Reviews land in
+    # later turns as workers finish, so they don't stack on top of the wave.
+    assert spawn.function.arguments.get("max_dispatches_per_turn") == 10
 
 
 def test_subagent_guardrails(polly_spec: AgentSpec) -> None:
     """Each sub-agent carries the blast_radius gate (push/destructive)."""
     by_name = {a.name: a for a in polly_spec.sub_agents}
-    for name in ("claude_code", "codex", "opencode", "agy"):
+    for name in (
+        "claude_code",
+        "claude_sonnet",
+        "claude_haiku",
+        "codex",
+        "opencode",
+        "opencode-minimax",
+        "opencode-glm",
+        "opencode-deepseek",
+        "agy",
+    ):
         guardrails = by_name[name].guardrails
         assert guardrails is not None, name
         assert [p.name for p in guardrails.policies] == ["blast_radius"], name
@@ -428,6 +530,7 @@ def test_function_policies_have_nonempty_arguments(polly_spec: AgentSpec) -> Non
             )
             checked += 1
     # orchestrator: blast_radius + spawn_bounds + headless_subagent_purpose_guard
-    # = 3; sub-agents: blast_radius x4 (claude_code, codex, opencode,
-    # agy) = 4 -> 7 total. Fewer = a policy dropped.
-    assert checked == 7, f"expected 7 function policies in the bundle, inspected {checked}"
+    # = 3; sub-agents: blast_radius x9 (claude_code, claude_sonnet,
+    # claude_haiku, codex, opencode, opencode-minimax, opencode-glm,
+    # opencode-deepseek, agy) = 9 -> 12 total. Fewer = a policy dropped.
+    assert checked == 12, f"expected 12 function policies in the bundle, inspected {checked}"

@@ -134,9 +134,31 @@ _SHIPPED_SUB_AGENT_EXAMPLES = [
     (
         "polly",
         app._POLLY_BUNDLE_SOURCE,
-        {"claude_code", "codex", "opencode", "agy"},
+        {
+            "claude_code",
+            "claude_sonnet",
+            "claude_haiku",
+            "codex",
+            "opencode",
+            "opencode-minimax",
+            "opencode-glm",
+            "opencode-deepseek",
+            "agy",
+        },
     ),
-    ("debby", app._DEBBY_BUNDLE_SOURCE, {"claude", "gpt"}),
+    (
+        "debby",
+        app._DEBBY_BUNDLE_SOURCE,
+        {
+            "claude",
+            "claude_sonnet",
+            "claude_haiku",
+            "gpt",
+            "opencode-minimax",
+            "opencode-glm",
+            "opencode-deepseek",
+        },
+    ),
 ]
 
 
