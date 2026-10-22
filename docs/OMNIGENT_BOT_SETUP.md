@@ -103,7 +103,7 @@ In **`omnigent-ai/omnigent` → Settings → Secrets and variables → Actions**
 ### Sub-agent commit co-author trailer
 
 polly never commits directly; its coding sub-agents (`claude_code`, `codex`,
-`pi`) run `git commit` / `gh pr create` in their own worktrees. Each such commit
+`opencode`, `agy`) run `git commit` / `gh pr create` in their own worktrees. Each such commit
 ends with a co-author trailer attributing it to the org:
 
 ```
@@ -114,7 +114,8 @@ This requirement lives in the worker IMPLEMENT instructions:
 
 - `examples/polly/agents/claude_code/config.yaml`
 - `examples/polly/agents/codex/config.yaml`
-- `examples/polly/agents/pi/config.yaml`
+- `examples/polly/agents/opencode/config.yaml`
+- `examples/polly/agents/agy/config.yaml`
 
 > A `Co-authored-by` trailer is GitHub's lightweight attribution mechanism — it
 > attributes the commit to the org in addition to the worker author and needs no

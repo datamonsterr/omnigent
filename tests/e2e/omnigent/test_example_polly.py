@@ -3,8 +3,8 @@
 polly is the standalone multi-agent coding orchestrator (successor to the
 deleted nessie example, whose deep structural pins were folded in here).
 Loads the bundle and asserts the distinctive wiring stays intact: the
-claude-sdk orchestrator brain, the seven cross-vendor coding sub-agents
-(claude_code / codex / opencode / cursor / hermes / agy / pi, which implement,
+claude-sdk orchestrator brain, the four cross-vendor coding sub-agents
+(claude_code / codex / opencode / agy, which implement,
 review, and explore),
 the three spine skills, and the bounds/blast-radius guardrails. Pure spec-load
 — no LLM, no credentials.
@@ -69,11 +69,10 @@ def test_orchestrator_executor(polly_spec: AgentSpec) -> None:
 
 def test_coding_subagents(polly_spec: AgentSpec) -> None:
     """
-    The bundle has exactly seven coding sub-agents: ``claude_code`` (claude-native),
-    ``codex`` (codex-native), ``opencode`` (opencode-native), ``cursor``
-    (cursor-native), ``hermes`` (hermes-native), and ``agy`` (antigravity-native)
-    on the native terminal harnesses, plus ``pi`` (pi) as the headless
-    multi-model worker. All implement, review, and explore. The native
+    The bundle has exactly four coding sub-agents: ``claude_code`` (claude-native),
+    ``codex`` (codex-native), ``opencode`` (opencode-native), and ``agy``
+    (antigravity-native) on the native terminal harnesses. All implement,
+    review, and explore. The native
     harnesses render terminal-first (Chat / Terminal pill) so the human can
     watch or take over.
 
@@ -85,28 +84,20 @@ def test_coding_subagents(polly_spec: AgentSpec) -> None:
         "agy",
         "claude_code",
         "codex",
-        "cursor",
-        "hermes",
         "opencode",
-        "pi",
     ]
     assert fam["claude_code"] == "claude-native"
     assert fam["codex"] == "codex-native"
     assert fam["opencode"] == "opencode-native"
-    assert fam["cursor"] == "cursor-native"
-    assert fam["hermes"] == "hermes-native"
     assert fam["agy"] == "antigravity-native"
-    assert fam["pi"] == "pi"
-    # Seven distinct vendors → any implementer's diff is reviewable by another.
-    assert len(set(fam.values())) == 7
+    # Four distinct vendors → any implementer's diff is reviewable by another.
+    assert len(set(fam.values())) == 4
     # Headless bypass knobs so workers don't stall on ApprovalCards.
     by_name = {a.name: a for a in polly_spec.sub_agents}
     assert by_name["claude_code"].executor.config.get("permission_mode") == "auto"
     assert by_name["claude_code"].executor.model is None
     assert by_name["codex"].executor.config.get("yolo") in (True, "True", "true")
-    assert by_name["cursor"].executor.config.get("yolo") in (True, "True", "true")
-    assert by_name["cursor"].executor.model == "grok-4.5"
-    for name in ("claude_code", "codex", "opencode", "cursor", "hermes", "agy", "pi"):
+    for name in ("claude_code", "codex", "opencode", "agy"):
         prompt = (_POLLY_BUNDLE / "agents" / name / "config.yaml").read_text(encoding="utf-8")
         assert "IMPLEMENT — write real product code" in prompt
         assert "REVIEW — verify another agent's diff" in prompt
@@ -118,29 +109,6 @@ def test_polly_preflights_host_harness_readiness() -> None:
     assert "sys_session_get_info({})" in config
     assert "`configured_harnesses` map" in config
     assert config.index("configured_harnesses") < config.index("command -v")
-
-
-def test_pi_subagent_is_headless_scaffold_worker(polly_spec: AgentSpec) -> None:
-    """
-    The ``pi`` sub-agent is a headless scaffold-harness child: pi harness,
-    no pinned model/profile (so ``args.model`` per dispatch — and otherwise
-    the provider default — decides), and an ``os_env`` block so the bridged
-    ``sys_os_*`` tools register and every shell call crosses the policy
-    layer (``blast_radius`` matches ``sys_os_shell``).
-
-    A pinned model would defeat the per-dispatch multi-model point; a
-    dropped ``os_env`` would leave the worker with no shell/file tools at
-    all (it would claim to explore but be unable to read anything).
-    """
-    pi = next(a for a in polly_spec.sub_agents if a.name == "pi")
-    assert pi.executor.config.get("harness") == "pi"
-    assert pi.executor.model is None
-    assert pi.executor.profile is None
-    # No native bypass knobs — pi is not a terminal harness.
-    assert pi.executor.config.get("permission_mode") is None
-    assert pi.executor.config.get("yolo") is None
-    assert pi.os_env is not None
-    assert pi.os_env.type == "caller_process"
 
 
 def test_spine_skills_present(polly_spec: AgentSpec) -> None:
@@ -251,7 +219,7 @@ def test_polly_test_count_ground_truth_guidance() -> None:
     assert "miscount`, `over-report`, or `fabrication`" in config_compact
     assert "exact file set/command/commit" in cross_review_compact
 
-    for name in ("claude_code", "codex", "opencode", "cursor", "hermes", "agy", "pi"):
+    for name in ("claude_code", "codex", "opencode", "agy"):
         worker = (_POLLY_BUNDLE / "agents" / name / "config.yaml").read_text(encoding="utf-8")
         worker_compact = " ".join(worker.split())
         assert "When you report test results, include the exact command and file set" in (
@@ -354,9 +322,8 @@ def test_investigation_skill_delegates_read_only_work() -> None:
 
     assert "Use for any read-only task: investigation, debugging, audit" in compact
     assert (
-        "Dispatch each task to `claude_code`, `codex`, `opencode`, `cursor`, `hermes`, "
-        "`agy`, or `pi`: "
-        '`sys_session_send(agent="claude_code"|"codex"|"opencode"|"cursor"|"hermes"|"agy"|"pi", '
+        "Dispatch each task to `claude_code`, `codex`, `opencode`, or `agy`: "
+        '`sys_session_send(agent="claude_code"|"codex"|"opencode"|"agy", '
         'title="explore-<task_slug>", '
         'args={purpose: "explore", input: "<question + exact scope + evidence requested>"})`'
     ) in compact
@@ -428,7 +395,7 @@ def test_orchestrator_guardrails(polly_spec: AgentSpec) -> None:
 def test_subagent_guardrails(polly_spec: AgentSpec) -> None:
     """Each sub-agent carries the blast_radius gate (push/destructive)."""
     by_name = {a.name: a for a in polly_spec.sub_agents}
-    for name in ("claude_code", "codex", "opencode", "cursor", "hermes", "agy", "pi"):
+    for name in ("claude_code", "codex", "opencode", "agy"):
         guardrails = by_name[name].guardrails
         assert guardrails is not None, name
         assert [p.name for p in guardrails.policies] == ["blast_radius"], name
@@ -461,6 +428,6 @@ def test_function_policies_have_nonempty_arguments(polly_spec: AgentSpec) -> Non
             )
             checked += 1
     # orchestrator: blast_radius + spawn_bounds + headless_subagent_purpose_guard
-    # = 3; sub-agents: blast_radius x7 (claude_code, codex, opencode, cursor,
-    # hermes, agy, pi) = 7 -> 10 total. Fewer = a policy dropped.
-    assert checked == 10, f"expected 10 function policies in the bundle, inspected {checked}"
+    # = 3; sub-agents: blast_radius x4 (claude_code, codex, opencode,
+    # agy) = 4 -> 7 total. Fewer = a policy dropped.
+    assert checked == 7, f"expected 7 function policies in the bundle, inspected {checked}"
