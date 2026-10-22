@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { useMemo } from "react";
 import { useAccountPools } from "@/hooks/useAccountPools";
 import { accountQuotaSummary, poolForHarness, selectableAccounts } from "@/lib/accountPoolsApi";
@@ -36,13 +37,41 @@ export function AccountSelect({
   /** Optional visible label. */
   label?: string;
 }) {
-  const { data: pools } = useAccountPools();
+  const { data: pools, isLoading, error, refetch, isFetching } = useAccountPools(harness !== null);
   const accounts = useMemo(() => {
     if (!harness || !pools) return [];
     return selectableAccounts(poolForHarness(pools, harness));
   }, [harness, pools]);
 
-  if (accounts.length === 0) return null;
+  if (!harness) return null;
+  if (error)
+    return (
+      <div role="alert" className="text-sm text-destructive">
+        Could not load accounts: {error.message}{" "}
+        <Button
+          type="button"
+          variant="outline"
+          disabled={isFetching}
+          onClick={() => void refetch()}
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  if (isLoading)
+    return (
+      <p role="status" className="text-sm text-muted-foreground">
+        Loading accounts…
+      </p>
+    );
+  if (accounts.length === 0)
+    return (
+      <p className="text-sm text-muted-foreground">
+        {pools && poolForHarness(pools, harness)
+          ? "No enabled accounts in this pool."
+          : "No account pool for this harness. Auto uses the server default."}
+      </p>
+    );
 
   return (
     <div className="flex flex-col gap-1">
@@ -51,7 +80,7 @@ export function AccountSelect({
         value={value ?? AUTO_VALUE}
         onValueChange={(next) => onChange(next === AUTO_VALUE ? null : next)}
       >
-        <SelectTrigger className="w-full" data-testid={testId}>
+        <SelectTrigger aria-label={label ?? "Account"} className="w-full" data-testid={testId}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

@@ -82,4 +82,19 @@ describe("accountQuotaSummary", () => {
   it("reads unknown when there is no snapshot", () => {
     expect(accountQuotaSummary(POOL.accounts[1])).toBe("Quota unknown");
   });
+  it.each(["auth_failed", "blocked"])("shows %s even without quota percentages", (status) => {
+    const account = {
+      ...POOL.accounts[0],
+      quota: {
+        ...POOL.accounts[0].quota!,
+        known: false,
+        status,
+        five_hour: { remaining_pct: null, status, reset_at: null },
+        weekly: { remaining_pct: null, status, reset_at: null },
+      },
+    };
+    expect(accountQuotaSummary(account)).toBe(
+      status === "auth_failed" ? "Authentication failed" : "Blocked",
+    );
+  });
 });

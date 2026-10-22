@@ -79,6 +79,29 @@ idempotent.
 3. Accounts with exhausted or blocked quota are skipped. A pool with no
    eligible account fails the create — a session never runs unassigned.
 
+## Opt-in Codex quota-first selection
+
+Set this non-secret server setting before starting the server:
+
+```yaml
+codex_account_selection_policy: quota_first
+```
+
+The default is `load_first`. Only Codex automatic selection changes: fresh
+known usable quota first, then most remaining five-hour quota, then weekly
+quota, then fewest active plus pending sessions, then account ID. Explicit pins
+and other harness families retain their existing behavior. Settings → Accounts
+and the Codex Auto tooltip show the active policy reported by `/v1/info`.
+
+Quota observations must be no more than 120 seconds old and cannot be dated
+in the future to rank as known. Unknown or failed probes remain fallback
+candidates after fresh known usable accounts. A failed, unknown, or stale
+refresh cannot clear prior exhaustion, blocked, or failed-auth evidence; that
+account remains excluded until a fresh known observation permits it. Stale
+positive quota is not proof of availability. The probes read quota metadata
+without making paid inference calls. Applying server settings requires the
+normal deployment lifecycle; do not restart an active instance for this change.
+
 ## Per-dispatch accounts
 
 Orchestrators such as Polly and Debby can choose a pool account for each new

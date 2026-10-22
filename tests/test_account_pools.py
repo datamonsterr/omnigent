@@ -631,3 +631,99 @@ def test_quota_cache_does_not_mix_same_id_different_homes(monkeypatch: pytest.Mo
     second = quota.quota_target_for(_account("same", "/tmp/b"))
     assert provider("same", first).five_hour.remaining_pct == 10
     assert provider("same", second).five_hour.remaining_pct == 90
+
+
+def test_quota_first_prioritizes_fresh_remaining_then_balances_ties() -> None:
+    """An opt-in Codex pool favors fresh quota over load and balances equal quotas."""
+    pool = _pool("codex", [_account("a"), _account("b"), _account("unknown")])
+    quotas = {"a": _known(90, 40), "b": _known(80, 90), "unknown": AccountQuota()}
+    manager = AccountPoolManager(
+        FakeStore([pool]),
+        quota_provider=lambda aid, _: quotas[aid],
+        codex_selection_policy="quota_first",
+    )
+    manager.count_active_sessions = MagicMock(side_effect=lambda aid: 10 if aid == "a" else 0)
+    first, handle = manager.select_account(pool)
+    assert first.id == "a"
+    manager.reservation_tracker.release(handle)
+    quotas["b"].five_hour.remaining_pct = 90
+    second, handle = manager.select_account(pool)
+    assert second.id == "b"
+    manager.reservation_tracker.release(handle)
+    quotas["b"].weekly.remaining_pct = 40
+    manager.count_active_sessions = MagicMock(return_value=0)
+    first, first_handle = manager.select_account(pool)
+    second, second_handle = manager.select_account(pool)
+    assert [first.id, second.id] == ["a", "b"]
+    manager.reservation_tracker.release(first_handle)
+    manager.reservation_tracker.release(second_handle)
+    labels = {ACCOUNT_ID_LABEL_KEY: "unknown"}
+    prepare_session_account(
+        initial_labels=labels, harness="codex", sub_agent_name=None, manager=manager
+    )
+    assert labels[ACCOUNT_ID_LABEL_KEY] == "unknown"
+
+
+@pytest.mark.parametrize("status", ["exhausted", "blocked", "auth_failed"])
+@pytest.mark.parametrize("failure", ["raises", "unknown", "probe_error", "stale_known"])
+def test_quota_first_retains_unavailable_evidence_until_fresh_recovery(
+    status: str, failure: str
+) -> None:
+    """A failed or stale probe cannot rehabilitate an unavailable account."""
+    pool = _pool("codex", [_account("a")])
+    store = FakeStore([pool])
+    stored = AccountQuota(status=status, observed_at=int(time.time()) - 121)
+    store.save_quota_snapshot("a", stored)
+
+    def probe(_aid, _target):
+        if failure == "raises":
+            raise RuntimeError("probe unavailable")
+        if failure == "stale_known":
+            result = _known(100)
+            result.observed_at = int(time.time()) - 121
+            return result
+        return AccountQuota(status=failure)
+
+    manager = AccountPoolManager(store, quota_provider=probe, codex_selection_policy="quota_first")
+    for _ in range(2):
+        with pytest.raises(AccountPoolExhaustedError):
+            manager.select_account(pool)
+    assert store.get_quota_snapshot("a").status == status
+    manager.quota_provider = lambda _aid, _target: _known(20)
+    chosen, handle = manager.select_account(pool)
+    assert chosen.id == "a"
+    manager.reservation_tracker.release(handle)
+
+
+@pytest.mark.parametrize("offset", [-121, 121])
+def test_quota_first_does_not_rank_stale_or_future_quota_as_known(offset: int) -> None:
+    """Neither expired nor future observations establish available quota."""
+    pool = _pool("codex", [_account("a"), _account("b")])
+
+    def probe(aid, _target):
+        quota = _known(100 if aid == "a" else 20)
+        quota.observed_at = int(time.time()) + offset if aid == "a" else int(time.time())
+        return quota
+
+    manager = AccountPoolManager(
+        FakeStore([pool]), quota_provider=probe, codex_selection_policy="quota_first"
+    )
+    chosen, handle = manager.select_account(pool)
+    assert chosen.id == "b"
+    manager.reservation_tracker.release(handle)
+
+
+def test_quota_first_applies_only_to_codex_and_rejects_invalid_configuration() -> None:
+    """Other harnesses retain load-first ranking; policy typos fail closed."""
+    pool = _pool("antigravity-native", [_account("a"), _account("b")])
+    manager = AccountPoolManager(
+        FakeStore([pool]),
+        quota_provider=lambda aid, _: _known(90 if aid == "a" else 20),
+        codex_selection_policy="quota_first",
+    )
+    manager.count_active_sessions = MagicMock(side_effect=lambda aid: 10 if aid == "a" else 0)
+    chosen, handle = manager.select_account(pool)
+    assert chosen.id == "b"
+    manager.reservation_tracker.release(handle)
+    with pytest.raises(ValueError, match="codex_selection_policy"):
+        AccountPoolManager(FakeStore(), codex_selection_policy="quota_frist")

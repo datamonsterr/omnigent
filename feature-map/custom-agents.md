@@ -7,7 +7,7 @@ and deletes owned agents.
 ## Sub-features
 
 - `list`: server cards, owned rows, search of loaded results, and pagination.
-- `create`: name, description, harness, model, instructions, and MCP servers.
+- `create`: name, description, harness, model, account (Auto or an enabled account), instructions, and MCP servers.
 - `review`: configuration preview, including version, dates, MCP servers, and skills.
 - `edit`: partial configuration updates, explicit credential replacement/removal,
   dirty-draft confirmation, error retention, and stale-revision reload.

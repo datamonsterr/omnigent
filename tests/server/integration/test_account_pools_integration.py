@@ -347,3 +347,30 @@ async def test_session_create_new_main_spec_resolution_regression(
     )
     assert resp_pinned.status_code == 201, resp_pinned.text
     assert resp_pinned.json()["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-2"
+
+
+@pytest.mark.asyncio
+async def test_custom_agent_account_default_survives_bundle_and_registered_create(
+    client: AsyncClient, account_pool_store: SqlAlchemyAccountPoolStore
+) -> None:
+    """Reusable custom agents keep their pin; a session can explicitly override it."""
+    _install_manager(client, account_pool_store)
+    agent = await create_test_agent(
+        client,
+        executor={
+            "type": "omnigent",
+            "config": {"harness": "codex-native", "account_id": "codex-2"},
+        },
+    )
+    bundled = await client.get(f"/v1/sessions/{agent['_session_id']}")
+    assert bundled.json()["labels"][ACCOUNT_ID_LABEL_KEY] == "codex-2"
+    for explicit, expected in [(None, "codex-2"), ("codex-1", "codex-1")]:
+        response = await client.post(
+            "/v1/sessions",
+            json={
+                "agent_id": agent["id"],
+                "labels": {ACCOUNT_ID_LABEL_KEY: explicit} if explicit else {},
+            },
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["labels"][ACCOUNT_ID_LABEL_KEY] == expected

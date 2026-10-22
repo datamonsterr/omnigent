@@ -31,6 +31,8 @@ export interface AgentBundleInput {
   harness: string;
   /** Model identifier, e.g. "claude-sonnet-4-20250514". Required by the omnigent executor. */
   model: string;
+  /** Optional subscription account pin; null lets the server choose. */
+  accountId?: string | null;
   /** MCP server declarations to include as inline tools entries. */
   mcpServers?: MCPServerInput[];
 }
@@ -56,6 +58,7 @@ export async function buildAgentBundle(input: AgentBundleInput): Promise<File> {
   lines.push(`  model: ${input.model}`);
   lines.push("  config:");
   lines.push(`    harness: ${input.harness}`);
+  if (input.accountId) lines.push(`    account_id: ${yamlQuote(input.accountId)}`);
   lines.push("");
 
   lines.push("tools:");

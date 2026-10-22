@@ -175,3 +175,48 @@ async def test_usage_counts_sessions_by_account(client: AsyncClient, store, tmp_
     account = next(row for row in rows if row["id"] == "codex-acc1")
     assert account["usage"]["sessions"] == 1
     assert account["quota"]["exhausted"] is False
+
+
+@pytest.mark.asyncio
+async def test_today_usage_includes_earlier_sessions_and_excludes_yesterday(
+    client: AsyncClient, store, tmp_path, monkeypatch
+) -> None:
+    """Today uses midnight UTC on both inventory endpoints."""
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+
+    from omnigent.server.routes import account_pools
+    from tests.server.helpers import create_test_agent
+
+    agent = await create_test_agent(client)
+    pool = store.create_pool("pool-today", "today", "codex-native")
+    store.create_account("today-account", pool.id, str(tmp_path), home_kind="codex_home")
+    response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent["id"],
+            "harness_override": "codex-native",
+            "labels": {ACCOUNT_ID_LABEL_KEY: "today-account"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    created = response.json()["created_at"]
+    midnight = datetime.fromtimestamp(created, UTC).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    for clock, expected in [
+        (created + 1, 1),
+        (int((midnight + timedelta(days=1)).timestamp()), 0),
+    ]:
+        monkeypatch.setattr(account_pools, "time", SimpleNamespace(time=lambda clock=clock: clock))
+        for endpoint in ["/v1/accounts", "/v1/account-pools"]:
+            listing = (await client.get(f"{endpoint}?period_days=0")).json()["data"]
+            accounts = (
+                listing
+                if endpoint == "/v1/accounts"
+                else [row for pool in listing for row in pool["accounts"]]
+            )
+            assert (
+                next(row for row in accounts if row["id"] == "today-account")["usage"]["sessions"]
+                == expected
+            )

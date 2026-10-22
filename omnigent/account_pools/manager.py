@@ -28,7 +28,7 @@ from omnigent.account_pools.labels import (
     LEGACY_ACCOUNT_ID_LABEL_KEY,
 )
 from omnigent.account_pools.quota import AccountQuota, QuotaTarget, quota_target_for
-from omnigent.entities.account_pool import AccountPool, AccountPoolAccount
+from omnigent.entities.account_pool import QUOTA_FRESHNESS_SECONDS, AccountPool, AccountPoolAccount
 from omnigent.stores.account_pool_store import normalize_account_pool_harness
 
 
@@ -147,6 +147,7 @@ class AccountPoolManager:
         conversation_store: Any | None = None,
         reservation_tracker: AccountReservationTracker | None = None,
         quota_provider: Callable[[str, QuotaTarget], AccountQuota] | None = None,
+        codex_selection_policy: str = "load_first",
     ) -> None:
         """
         Initialize the manager.
@@ -158,7 +159,12 @@ class AccountPoolManager:
             a fresh one.
         :param quota_provider: The quota probe, or ``None`` for the default
             inference-free probes.
+        :param codex_selection_policy: Codex auto ranking: ``load_first`` (default)
+            or ``quota_first``. Other harnesses and explicit pins are unchanged.
         """
+        if codex_selection_policy not in ("load_first", "quota_first"):
+            raise ValueError("codex_selection_policy must be load_first or quota_first")
+        self.codex_selection_policy = codex_selection_policy
         self._selection_lock = threading.RLock()
         self.store = store
         self.conversation_store = conversation_store
@@ -226,6 +232,7 @@ class AccountPoolManager:
         model: str | None = None,
         *,
         probe: bool = True,
+        retain_unavailable: bool = False,
     ) -> AccountQuota:
         """Read the last known quota of an account.
 
@@ -238,6 +245,8 @@ class AccountPoolManager:
         :param model: The model the session would run, used to pick the
             Antigravity quota family.
         :param probe: Whether to probe when no fresh snapshot exists.
+        :param retain_unavailable: Keep prior unavailability on failed refresh;
+            enabled only by quota-first auto selection.
         :returns: The account's quota; unknown when the probe fails.
         """
         target = quota_target_for(account)
@@ -256,7 +265,10 @@ class AccountPoolManager:
         # reports a different quota for Gemini than for Claude.
         stored = self.store.get_quota_snapshot(account.id, family)
         if stored is not None and stored.is_fresh(int(time.time())):
-            return stored
+            if not retain_unavailable or (
+                stored.observed_at is not None and stored.observed_at <= int(time.time())
+            ):
+                return stored
         if not probe:
             return stored if stored is not None else AccountQuota()
         try:
@@ -267,6 +279,19 @@ class AccountPoolManager:
             quota.observed_at = int(time.time())
         if quota.model_family is None:
             quota.model_family = target.metadata.get("quota_family") or "default"
+        if (
+            retain_unavailable
+            and stored is not None
+            and stored.is_exhausted()
+            and not (
+                quota.is_known()
+                and quota.observed_at is not None
+                and quota.is_fresh(int(time.time()))
+                and quota.observed_at <= int(time.time())
+            )
+        ):
+            # An unknown refresh cannot clear evidence of exhaustion or failed auth.
+            return stored
         # A snapshot write never blocks selection.
         with contextlib.suppress(Exception):
             self.store.save_quota_snapshot(account.id, quota)
@@ -282,7 +307,8 @@ class AccountPoolManager:
         The ranking is: fewest active sessions (including pending launch
         reservations), then known quota before unknown quota, then greatest
         remaining five-hour quota, then greatest remaining weekly quota, then
-        the account id.
+        the account id. Codex's opt-in ``quota_first`` policy ranks fresh known
+        quota, five-hour and weekly remaining quota, then load and account id.
 
         :param pool: The pool to select from.
         :param model: The model the session would run, used to pick the
@@ -290,6 +316,10 @@ class AccountPoolManager:
         :returns: The chosen account and its reservation handle.
         :raises AccountPoolExhaustedError: when no account is eligible.
         """
+        quota_first = (
+            self.codex_selection_policy == "quota_first"
+            and normalize_account_pool_harness(pool.harness) == "codex"
+        )
         accounts = [account for account in pool.accounts if account.enabled]
         # The probes run in parallel: each one can take a couple of seconds
         # (a Codex app-server round trip), and a pool holds several accounts.
@@ -298,7 +328,9 @@ class AccountPoolManager:
             with ThreadPoolExecutor(max_workers=min(len(accounts), 8)) as pool_executor:
                 results = list(
                     pool_executor.map(
-                        lambda account: self.get_quota(account, model=model),
+                        lambda account: self.get_quota(
+                            account, model=model, retain_unavailable=quota_first
+                        ),
                         accounts,
                     )
                 )
@@ -320,6 +352,12 @@ class AccountPoolManager:
                 total_active = active_db + pending
 
                 is_known = quota.is_known()
+                if quota_first:
+                    is_known = (
+                        is_known
+                        and quota.observed_at is not None
+                        and 0 <= int(time.time()) - quota.observed_at <= QUOTA_FRESHNESS_SECONDS
+                    )
                 five_rem = (
                     quota.five_hour.remaining_pct
                     if (is_known and quota.five_hour.remaining_pct is not None)
@@ -332,11 +370,9 @@ class AccountPoolManager:
                 )
 
                 sort_key = (
-                    total_active,
-                    not is_known,
-                    -five_rem,
-                    -weekly_rem,
-                    account.id,
+                    (not is_known, -five_rem, -weekly_rem, total_active, account.id)
+                    if quota_first
+                    else (total_active, not is_known, -five_rem, -weekly_rem, account.id)
                 )
                 eligible.append((sort_key, account))
 

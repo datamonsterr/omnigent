@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { useAccountPools } from "@/hooks/useAccountPools";
 import { accountQuotaSummary, poolForHarness, selectableAccounts } from "@/lib/accountPoolsApi";
 import type { ComposerConfigSection } from "./ComposerConfigSections";
@@ -30,12 +31,51 @@ export function useAccountConfigSection({
   /** Test id of the section wrapper. */
   testId?: string;
 }): ComposerConfigSection | null {
-  const { data: pools } = useAccountPools();
+  const info = useServerInfo();
+  const quotaFirst =
+    harness?.startsWith("codex") &&
+    info !== "loading" &&
+    info.codex_account_selection_policy === "quota_first";
+  const { data: pools, isLoading, error, refetch } = useAccountPools(harness !== null);
   return useMemo<ComposerConfigSection | null>(() => {
-    if (!harness || !pools) return null;
+    if (!harness) return null;
+    if (error)
+      return {
+        testId,
+        header: "Account",
+        choices: [
+          {
+            key: "error",
+            label: `Could not load accounts: ${error.message}`,
+            checked: false,
+            disabled: true,
+          },
+          {
+            key: "retry",
+            label: "Retry",
+            checked: false,
+            onSelect: () => {
+              void refetch();
+            },
+          },
+        ],
+      };
+    if (isLoading)
+      return {
+        testId,
+        header: "Account",
+        choices: [{ key: "loading", label: "Loading accounts…", checked: false, disabled: true }],
+      };
+    if (!pools) return null;
     const pool = poolForHarness(pools, harness);
     const accounts = selectableAccounts(pool);
-    if (!pool || accounts.length === 0) return null;
+    if (!pool) return null;
+    if (accounts.length === 0)
+      return {
+        testId,
+        header: "Account",
+        choices: [{ key: "empty", label: "No enabled accounts", checked: false, disabled: true }],
+      };
     return {
       testId,
       header: "Account",
@@ -46,7 +86,9 @@ export function useAccountConfigSection({
           checked: selectedAccountId === null,
           onSelect: () => onSelect(null),
           testId: `${testId}-auto`,
-          title: ACCOUNT_AUTO_SUMMARY,
+          title: quotaFirst
+            ? "Most remaining fresh quota, then fewest active sessions"
+            : ACCOUNT_AUTO_SUMMARY,
         },
         ...accounts.map((account) => ({
           key: account.id,
@@ -65,5 +107,5 @@ export function useAccountConfigSection({
         })),
       ],
     };
-  }, [harness, pools, selectedAccountId, onSelect, testId]);
+  }, [harness, pools, selectedAccountId, onSelect, testId, isLoading, error, refetch, quotaFirst]);
 }

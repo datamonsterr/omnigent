@@ -200,6 +200,8 @@ class ServerInfoResponse(BaseModel):
     # The server keeps a harness account inventory (DB-backed pools). Absent on
     # older servers, which clients treat as "no account picker".
     account_pools_enabled: bool = False
+    codex_account_selection_policy: Literal["load_first", "quota_first"] = "load_first"
+    agent_picker_exclude_ids: list[str] = []
     features: dict[str, bool]
     harness_install_enabled: bool
     installable_harnesses: list[str]
@@ -1962,6 +1964,9 @@ def create_app(
         app.state.account_pool_manager = AccountPoolManager(
             store=account_pool_store,
             conversation_store=conversation_store,
+            codex_selection_policy=resolved_server_config.get(
+                "codex_account_selection_policy", "load_first"
+            ),
         )
     # Deployment base path (e.g. "/proxy/6767"), so route handlers that build
     # a full-page redirect (not covered by BasePathMiddleware's inbound-only
@@ -3190,6 +3195,20 @@ def create_app(
                 "server_version": _server_version(),
                 "smart_routing_enabled": smart_routing_enabled,
                 "account_pools_enabled": account_pool_store is not None,
+                "codex_account_selection_policy": getattr(
+                    getattr(app.state, "account_pool_manager", None),
+                    "codex_selection_policy",
+                    "load_first",
+                ),
+                "agent_picker_exclude_ids": sorted(
+                    {
+                        value.strip()
+                        for value in os.environ.get("OMNIGENT_AGENT_PICKER_EXCLUDE_IDS", "").split(
+                            ","
+                        )
+                        if value.strip()
+                    }
+                ),
                 "smart_routing_sources": smart_routing_sources,
                 "features": app.state.feature_flags.frontend_dict(),
                 "harness_install_enabled": harness_install_enabled,

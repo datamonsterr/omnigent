@@ -503,11 +503,16 @@ export function useAvailableAgents(options: UseAvailableAgentsOptions = {}) {
   // stable identity and TanStack doesn't hand consumers a fresh array per render.
   const acpHarnessIds = useAcpHarnessIds(enabled);
   const harnessLabels = useHarnessLabels(enabled);
-  const select = useMemo(
-    () => (agents: AvailableAgent[]) =>
-      applyAcpHarnessCatalog(agents, acpHarnessIds, harnessLabels),
-    [acpHarnessIds, harnessLabels],
-  );
+  const excludedIds = serverInfo === "loading" ? undefined : serverInfo.agent_picker_exclude_ids;
+  const select = useMemo(() => {
+    const excluded = new Set(excludedIds ?? []);
+    return (agents: AvailableAgent[]) =>
+      applyAcpHarnessCatalog(
+        agents.filter((agent) => !excluded.has(agent.id)),
+        acpHarnessIds,
+        harnessLabels,
+      );
+  }, [acpHarnessIds, harnessLabels, excludedIds]);
   const queryClient = useQueryClient();
   // The harness/built-in rows come entirely from GET /v1/agents, so they must
   // not wait for a slow Mine session load (managed deployments with
